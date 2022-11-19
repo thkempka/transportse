@@ -9,12 +9,12 @@ Python script to calculate fluid flow in porous media, and advective, diffusive 
 tse.py: program code (requires custom config file to run)
 
 	Please use this command to run tse.py:
-	ipython -i tse.py [path]<config file name>
+	ipython -i [path]tse.py [path]<config file name>
 
 	Examples:
-	ipython -i tse.py config.py
-	ipython -i tse.py simulation/config.py
-	ipython -i tse.py ~/tse/simulation/config.py
+	ipython -i [path]tse.py config.py
+	ipython -i [path]tse.py simulation/config.py
+	ipython -i [path]tse.py ~/tse/simulation/config.py
 
 tse2pvd.py: program to convert TRANSPORTSE output files to Paraview format (pvd)
 
