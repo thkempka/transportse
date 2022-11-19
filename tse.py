@@ -193,6 +193,8 @@ if config.FLUIDPROP:
 @njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
 def alpha(i1, j1, k1, i2, j2, k2, nue, rho_f, K, q, d, d1, d2, n):
     '''
+        alpha = k * rho_f / (nue * di)
+        with rho_f upwinded
         i1 > i2, j1 > j2
     '''
     a = 0
@@ -202,6 +204,17 @@ def alpha(i1, j1, k1, i2, j2, k2, nue, rho_f, K, q, d, d1, d2, n):
             harm(i1, j1, k1, i2, j2, k2, nue, n) /
             (d[d2] * (d[d1]+d[d2])*0.5)
             * (a * rho_f[i1,j1,k1] + (1-a) * rho_f[i2,j2,k2]))
+
+@njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
+def upwnd(i1, j1, k1, i2, j2, k2, X, q):
+    '''
+        Upwind parameter
+        i1 > i2, j1 > j2
+    '''
+    a = 0
+    if q[i2, j2, k2] < 0:
+        a = 1
+    return (a * X[i1,j1,k1] + (1-a) * X[i2,j2,k2])
 
 @njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
 def beta_g(i1, j1, k1, i2, j2, k2, rho_f, d):
@@ -322,13 +335,12 @@ def explicit_C(D_f, phi):
     return dt_NeC
 
 # determine elements for chemical calculation
-#@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
-      #nogil=numba_nogil)
+@njit(parallel=False, fastmath=numba_fastmath,cache=numba_cache)
 def index_list(BC):
     chem_list = []
-    for k in prange(nz):
-        for j in prange(ny):
-            for i in prange(nx):
+    for k in range(nz):
+        for j in range(ny):
+            for i in range(nx):
                 if BC[i,j,k] != 1:
                     chem_list.append((i, j, k))
                     #chem_list.append((i,j,k,numpy.round(C[i,j,k],8)
@@ -382,7 +394,7 @@ def compute_Pi(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
             L_ = beta_g(i, j, k, i, j, k-1, rho_f, 2)
 
         por = phi[i,j,k]
-        R = rho_f[i,j,k] * (c_r[i,j,k]*(1-por)+por*c_f[i,j,k]) / dt_P
+        R = rho_f[i,j,k] * ((1-por) * c_r[i,j,k] + por * c_f[i,j,k]) / dt_P
         M = A_ + C_ + E_ + G_ + I_ + K_
 
         return (1-SOR) * P[i,j,k] + SOR * (
@@ -562,8 +574,8 @@ def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
                 if i < nx - 1:
                     qx[i, j, k] = (- harm(i+1, j, k, i, j, k, Kx, 0) /
                                 harm(i+1, j, k,  i, j, k, nue, 0)
-                                * ((P[i+1, j, k]-P[i, j, k]) /
-                                  (0.5 * (dx[i+1] + dx[i]))
+                                * ((P[i+1, j, k] -P[i, j, k]) /
+                                  (0.5 * (dx[i+1] + dx[i])) 
                                 + amean(i+1, j, k, i, j, k, rho_f, 0) * g *
                                 numpy.sin(beta)))
                 if j < ny - 1:
@@ -571,6 +583,7 @@ def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
                                 harm(i, j+1, k, i, j, k, nue, 1)
                                 * (P[i, j+1, k] - P[i, j, k]) /
                                   (0.5 * (dy[j+1] + dy[j])))
+                    
                 if k < nz - 1:
                     qz[i, j, k] = (- harm(i, j, k+1, i, j, k, Kz, 2) /
                                 harm(i, j, k+1, i, j, k, nue, 2)
@@ -929,7 +942,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
             cpf = harm(i, j, k, i+1, j, k, cp_f, 0)
             A_ = ((1-por) * lr + por * lf) / dd2
             S_ = harm(i, j, k, i+1, j, k, rho_f, 0) * cpf / dd
-            G_ = max(qx[i,j,k], 0) * S_
+            G_ = max(qx[i,j,k], 0) * S_ 
             H_ = min(qx[i,j,k], 0) * S_
             if upwind == 0:
                 G_ = 0.5 * qx[i,j,k] * S_
@@ -1162,6 +1175,9 @@ while t_sim < t:
     num_it_P = 0
     if config.FLUIDFLOW:
         while not Co_Filled:
+            #rho_fn = numpy.zeros((nx,ny,nz))
+            #while numpy.max(numpy.abs(rho_fn-rho_f)) >= 1e-2:
+                #rho_fn = rho_f.copy()
             if not config.PCG:
                 dt, dt_P, P, Pn, converged_P, num_it_P = compute_Pi(P, c_f,
                         nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
@@ -1191,8 +1207,9 @@ while t_sim < t:
                     run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
                                         phi, Kx, Ky, Kz, rho_r)
 
-            qx, qy, qz  = compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
+            #print('d_rho', numpy.max(numpy.abs(rho_fn-rho_f)))
 
+            qx, qy, qz  = compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
 
             # Check CFL and Neumann criteria to adapt maximum time step as
             # required
@@ -1333,11 +1350,9 @@ while t_sim < t:
                 results = p.starmap(config.chemical_reactions, chem_list)
             for num, l in enumerate(chem_list):
                 C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
-                phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
-                config.V_frac[l[0],l[1],l[2]] = \
+                phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]] = \
                         results[num][0], results[num][1], \
-                        results[num][2], results[num][3], \
-                        results[num][4]
+                        results[num][2], results[num][3]
                 #C[l[0],l[1],l[2]], T[l[0],l[1],l[2]], P[l[0],l[1],l[2]], \
                         #rho_f[l[0],l[1],l[2]], phi[l[0],l[1],l[2]] = \
                         #results[num][0], results[num][1], results[num][2], \
