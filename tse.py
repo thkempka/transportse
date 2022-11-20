@@ -575,7 +575,7 @@ def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
                     qx[i, j, k] = (- harm(i+1, j, k, i, j, k, Kx, 0) /
                                 harm(i+1, j, k,  i, j, k, nue, 0)
                                 * ((P[i+1, j, k] -P[i, j, k]) /
-                                  (0.5 * (dx[i+1] + dx[i])) 
+                                  (0.5 * (dx[i+1] + dx[i]))
                                 + amean(i+1, j, k, i, j, k, rho_f, 0) * g *
                                 numpy.sin(beta)))
                 if j < ny - 1:
@@ -583,7 +583,6 @@ def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
                                 harm(i, j+1, k, i, j, k, nue, 1)
                                 * (P[i, j+1, k] - P[i, j, k]) /
                                   (0.5 * (dy[j+1] + dy[j])))
-                    
                 if k < nz - 1:
                     qz[i, j, k] = (- harm(i, j, k+1, i, j, k, Kz, 2) /
                                 harm(i, j, k+1, i, j, k, nue, 2)
@@ -942,7 +941,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
             cpf = harm(i, j, k, i+1, j, k, cp_f, 0)
             A_ = ((1-por) * lr + por * lf) / dd2
             S_ = harm(i, j, k, i+1, j, k, rho_f, 0) * cpf / dd
-            G_ = max(qx[i,j,k], 0) * S_ 
+            G_ = max(qx[i,j,k], 0) * S_
             H_ = min(qx[i,j,k], 0) * S_
             if upwind == 0:
                 G_ = 0.5 * qx[i,j,k] * S_
@@ -1201,11 +1200,11 @@ while t_sim < t:
                 print('Threading layer:', threading_layer(), \
                       'Threads:', get_num_threads(), '\n')
 
-            # calculate fluid properties
-            if config.FLUIDPROP:
-                C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
-                    run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
-                                        phi, Kx, Ky, Kz, rho_r)
+            ## calculate fluid properties
+            #if config.FLUIDPROP:
+                #C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
+                    #run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
+                                        #phi, Kx, Ky, Kz, rho_r)
 
             #print('d_rho', numpy.max(numpy.abs(rho_fn-rho_f)))
 
@@ -1325,12 +1324,6 @@ while t_sim < t:
         #if (not config.FLUIDFLOW) and (not config.SPECTRANS):
             #dt = min(dt_max_abs,dt_T)
 
-    # calculate fluid properties
-    if config.FLUIDPROP:
-        C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
-            run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
-                                phi, Kx, Ky, Kz, rho_r)
-
     # calculate chemical reactions
     if config.CHEMREACT:
         if t_sim > 0:
@@ -1370,6 +1363,12 @@ while t_sim < t:
     # calculate mass balances
     if config.MASSBALAN:
         mass = config.mass_balance(C, qx, qy, qz, dt, mass)
+
+    # calculate fluid properties
+    if config.FLUIDPROP:
+        C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
+            run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
+                                phi, Kx, Ky, Kz, rho_r)
 
     t_sim += dt
     n_tsteps += 1
