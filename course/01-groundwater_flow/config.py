@@ -4,7 +4,7 @@
 import os
 import sys
 import numpy
-import pickle
+import joblib
 from numba import njit
 
 # PARALLELISATION AND TUNING ###################################################
