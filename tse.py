@@ -150,6 +150,10 @@ vx = numpy.zeros((nx,ny,nz)) # Smolarkiewicz velocity (m/s)
 vy = numpy.zeros((nx,ny,nz)) # Smolarkiewicz velocity (m/s)
 vz = numpy.zeros((nx,ny,nz)) # Smolarkiewicz velocity (m/s)
 
+## STORAGE CORRECTION FOR TRANSPORT ############################################
+phit = numpy.zeros((nx,ny,nz)) # Porosity for transport equations (-)
+Pi   = numpy.zeros((nx,ny,nz)) # Initial pore pressure (-)
+
 ## PECLET MATRICES #############################################################
 PeC = numpy.zeros((nx,ny,nz,3)) # Smolarkiewicz velocity (m/s)
 PeT = numpy.zeros((nx,ny,nz,3)) # Smolarkiewicz velocity (m/s)
@@ -237,6 +241,10 @@ def l2_norm(New, Old, Process):
         return 1
     else:
         return l2
+
+@njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
+def P_diff(New, Old):
+    return numpy.max(numpy.abs(New-Old))
 
 @njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
 def amean(i1, j1, k1, i2, j2, k2, X, n):
@@ -594,7 +602,7 @@ def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
       nogil=numba_nogil)
-def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
+def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
                 SOR=1.0, max_it=20000, inc_it=1.00, max_dt=dt_max, min_dt=1e-8,
                 C_conv=1e-10, upwind=1):
     t_C = 0
@@ -789,7 +797,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if i != nx-1:
             dd = dx[i]
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
-            ph = amean(i+1, j, k, i, j, k, phi, 0)
+            ph = amean(i+1, j, k, i, j, k, phit, 0)
             re = harm(i+1, j, k, i, j, k, RC, 0)
             A_ = (harm(i+1, j, k, i, j, k, D_f, 0) * ph + D_xr ) / dd2 / re
             G_ = max(qx[i,j,k], 0) / dd / re
@@ -802,7 +810,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if i != 0:
             dd = dx[i]
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
-            ph = amean(i-1, j, k, i, j, k, phi, 0)
+            ph = amean(i-1, j, k, i, j, k, phit, 0)
             re = harm(i-1, j, k, i, j, k, RC, 0)
             B_ = (harm(i-1, j, k, i, j, k, D_f, 0) * ph + D_xl ) / dd2 / re
             I_ = max(qx[i-1,j,k], 0) / dd / re
@@ -815,7 +823,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if j != ny-1:
             dd = dy[j]
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
-            ph = amean(i, j+1, k, i, j, k, phi, 1)
+            ph = amean(i, j+1, k, i, j, k, phit, 1)
             re = harm(i, j+1, k, i, j, k, RC, 1)
             C_ = (harm(i, j+1, k, i, j, k, D_f, 1) * ph + D_yr ) / dd2 / re
             K_ = max(qy[i,j,k], 0) / dd / re
@@ -828,7 +836,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if j != 0:
             dd = dy[j]
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
-            ph = amean(i, j-1, k, i, j, k, phi, 1)
+            ph = amean(i, j-1, k, i, j, k, phit, 1)
             re = harm(i, j-1, k, i, j, k, RC, 1)
             D_ = (harm(i, j-1, k, i, j, k, D_f, 1) * ph + D_yl ) / dd2 / re
             M_ = max(qy[i,j-1,k], 0) / dd / re
@@ -841,7 +849,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if k != nz-1:
             dd = dz[k]
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
-            ph = amean(i, j, k+1, i, j, k, phi, 2)
+            ph = amean(i, j, k+1, i, j, k, phit, 2)
             re = harm(i, j, k+1, i, j, k, RC, 2)
             E_ = (harm(i, j, k+1, i, j, k, D_f, 2) * ph + D_zr ) / dd2 / re
             O_ = max(qz[i,j,k], 0) / dd / re
@@ -854,7 +862,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if k != 0:
             dd = dz[k]
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
-            ph = amean(i, j, k-1, i, j, k, phi, 2)
+            ph = amean(i, j, k-1, i, j, k, phit, 2)
             re = harm(i, j, k-1, i, j, k, RC, 2)
             F_ = (harm(i, j, k-1, i, j, k, D_f, 2) * ph + D_zl ) / dd2 / re
             Q_ = max(qz[i,j,k-1], 0) / dd / re
@@ -917,7 +925,7 @@ def compute_C(C, D_f, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
       nogil=numba_nogil)
-def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
+def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
               SOR=1.0, max_it=100, inc_it=1.05, max_dt=dt_max, min_dt=1e-8,
               T_conv=1e-10, upwind=1):
     t_T = 0
@@ -930,17 +938,195 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
         A_ = B_ = C_ = D_ = E_ = F_ = G_ = H_ = \
         I_ = J_ = K_ = L_ = M_ = N_ = O_ = P_ = Q_ = R_ = S_ = \
         Mnew = Nnew = Onew = Pnew = Qnew = Rnew =  \
-        Mold = Nold = Oold = Pold = Qold = Rold =  0
+        Mold = Nold = Oold = Pold = Qold = Rold = \
+        D_xr = D_yr = D_zr = D_xl = D_yl = D_zl = 0
+
+        # compute dispersion tensor if any dispersivity term is non-zero
+        if l_l[i,j,k] != 0 or l_t[i,j,k] != 0:
+            qxl = qyl = qzl = qxr = qyr = qzr = \
+            qxyl = qxzl = qyxl = qyzl = qzxl = qzyl = \
+            qxyr = qxzr = qyxr = qyzr = qzxr = qzyr = 0
+
+            # calculate longitudinal and transversal velocity terms
+            if i != 0: # left face
+                qxl = qx[i-1,j,k] # longitudinal term
+
+                # X-Y plane transversal term (clockwise)
+                q1 = qy[i-1,j,k]
+                q2 = qy[i,j,k]
+                q3 = q4 = 0
+                c = 2
+                if j != 0:
+                    q3 = qy[i,j-1,k]
+                    q4 = qy[i-1,j-1,k]
+                    c += 2
+                if not BT[i-1,j,k]:
+                    qxyl = (q1 + q2 + q3 + q4) / c
+
+                # X-Z plane transversal term (clockwise)
+                q1 = qz[i-1,j,k]
+                q2 = qz[i,j,k]
+                q3 = q4 = 0
+                c = 2
+                if k != 0:
+                    q3 = qz[i,j,k-1]
+                    q4 = qz[i-1,j,k-1]
+                    c += 2
+                if not BT[i-1,j,k]:
+                    qxzl = (q1 + q2 + q3 + q4) / c
+
+            if i != nx-1: # right face
+                qxr = qx[i,j,k] # longitudinal term
+
+                # X-Y plane transversal term (clockwise)
+                q1 = qy[i,j,k]
+                q2 = qy[i+1,j,k]
+                q3 = q4 = 0
+                c = 2
+                if j != 0:
+                    q3 = qy[i+1,j-1,k]
+                    q4 = qy[i,j-1,k]
+                    c += 2
+                if not BT[i+1,j,k]:
+                    qxyr = (q1 + q2 + q3 + q4) / c
+
+                # X-Z plane transversal term (clockwise)
+                q1 = qz[i,j,k]
+                q2 = qz[i+1,j,k]
+                q3 = q4 = 0
+                c = 2
+                if k != 0:
+                    q3 = qz[i+1,j,k-1]
+                    q4 = qz[i,j,k-1]
+                    c += 2
+                if not BT[i+1,j,k]:
+                    qxzr = (q1 + q2 + q3 + q4) / c
+
+            if j != 0: # left face
+                qyl = qy[i,j-1,k] # longitudinal term
+
+                # Y-X plane transversal term (clockwise)
+                q1 = qx[i,j,k]
+                q2 = qx[i,j-1,k]
+                q3 = q4 = 0
+                c = 2
+                if i != 0:
+                    q3 = qx[i-1,j-1,k]
+                    q4 = qx[i-1,j,k]
+                    c += 2
+                if not BT[i,j-1,k]:
+                    qyxl = (q1 + q2 + q3 + q4) / c
+
+                # Y-Z plane transversal term (clockwise)
+                q1 = qz[i,j-1,k]
+                q2 = qz[i,j,k]
+                q3 = q4 = 0
+                c = 2
+                if k != 0:
+                    q3 = qz[i,j,k-1]
+                    q4 = qz[i,j-1,k-1]
+                    c += 2
+                if not BT[i,j-1,k]:
+                    qyzl = (q1 + q2 + q3 + q4) / c
+
+            if j != ny-1: # right face
+                qyr = qy[i,j,k] # longitudinal term
+
+                # Y-X plane transversal term (clockwise)
+                q1 = qx[i,j+1,k]
+                q2 = qx[i,j,k]
+                q3 = q4 = 0
+                c = 2
+                if i != 0:
+                    q3 = qx[i-1,j,k]
+                    q4 = qx[i-1,j+1,k]
+                    c += 2
+                if not BT[i,j+1,k]:
+                    qyxr = (q1 + q2 + q3 + q4) / c
+
+                # Y-Z plane transversal term (clockwise)
+                q1 = qz[i,j,k]
+                q2 = qz[i,j+1,k]
+                q3 = q4 = 0
+                c = 2
+                if k != 0:
+                    q3 = qz[i,j+1,k-1]
+                    q4 = qz[i,j,k-1]
+                    c += 2
+                if not BT[i,j+1,k]:
+                    qyzr = (q1 + q2 + q3 + q4) / c
+
+            if k != 0: # bottom face
+                qzl = qz[i,j,k-1] # longitudinal term
+
+                # Z-X plane transversal term (clockwise)
+                q1 = qx[i,j,k]
+                q2 = qx[i,j,k-1]
+                q3 = q4 = 0
+                c = 2
+                if i != 0:
+                    q3 = qx[i-1,j,k-1]
+                    q4 = qx[i-1,j,k]
+                    c += 2
+                if not BT[i,j,k-1]:
+                    qzxl = (q1 + q2 + q3 + q4) / c
+
+                # Z-Y plane transversal term (clockwise)
+                q1 = qy[i,j,k]
+                q2 = qy[i,j,k-1]
+                q3 = q4 = 0
+                c = 2
+                if j != 0:
+                    q3 = qy[i,j-1,k-1]
+                    q4 = qy[i,j-1,k]
+                    c += 2
+                if not BT[i,j,k-1]:
+                    qzyl = (q1 + q2 + q3 + q4) / c
+
+            if k != nz-1: # top face
+                qzr = qz[i,j,k] # longitudinal term
+
+                # Z-X plane transversal term (clockwise)
+                q1 = qx[i,j,k+1]
+                q2 = qx[i,j,k]
+                q3 = q4 = 0
+                c = 2
+                if i != 0:
+                    q3 = qx[i-1,j,k]
+                    q4 = qx[i-1,j,k+1]
+                    c += 2
+                if not BT[i,j,k+1]:
+                    qzxr = (q1 + q2 + q3 + q4) / c
+
+                # Z-Y plane transversal term (clockwise)
+                q1 = qy[i,j,k+1]
+                q2 = qy[i,j,k]
+                q3 = q4 = 0
+                c = 2
+                if j != 0:
+                    q3 = qy[i,j-1,k]
+                    q4 = qy[i,j-1,k+1]
+                    c += 2
+                if not BT[i,j,k+1]:
+                    qzyr = (q1 + q2 + q3 + q4) / c
+
+            D_xl = l_l[i,j,k] * abs(qxl) + l_t[i,j,k] * (abs(qxyl) + abs(qxzl))
+            D_yl = l_l[i,j,k] * abs(qyl) + l_t[i,j,k] * (abs(qyxl) + abs(qyzl))
+            D_zl = l_l[i,j,k] * abs(qzl) + l_t[i,j,k] * (abs(qzxl) + abs(qzyl))
+            D_xr = l_l[i,j,k] * abs(qxr) + l_t[i,j,k] * (abs(qxyr) + abs(qxzr))
+            D_yr = l_l[i,j,k] * abs(qyr) + l_t[i,j,k] * (abs(qyxr) + abs(qyzr))
+            D_zr = l_l[i,j,k] * abs(qzr) + l_t[i,j,k] * (abs(qzxr) + abs(qzyr))
 
         if i != nx-1:
             dd = dx[i]
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
-            por = amean(i, j, k, i+1, j, k, phi, 0)
+            por = amean(i, j, k, i+1, j, k, phit, 0)
             lf = harm(i, j, k, i+1, j, k, l_f, 0)
             lr = harm(i, j, k, i+1, j, k, l_r, 0)
             cpf = harm(i, j, k, i+1, j, k, cp_f, 0)
-            A_ = ((1-por) * lr + por * lf) / dd2
-            S_ = harm(i, j, k, i+1, j, k, rho_f, 0) * cpf / dd
+            rhocpf = harm(i, j, k, i+1, j, k, rho_f, 0) * cpf
+            A_ = ((1-por) * lr + por * lf + D_xr * rhocpf) / dd2
+            S_ = rhocpf / dd
             G_ = max(qx[i,j,k], 0) * S_
             H_ = min(qx[i,j,k], 0) * S_
             if upwind == 0:
@@ -951,14 +1137,15 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
         if i != 0:
             dd = dx[i]
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
-            por = amean(i, j, k, i-1, j, k, phi, 0)
+            por = amean(i, j, k, i-1, j, k, phit, 0)
             lf = harm(i, j, k, i-1, j, k, l_f, 0)
             lr = harm(i, j, k, i-1, j, k, l_r, 0)
             cpf = harm(i, j, k, i-1, j, k, cp_f, 0)
-            B_ = ((1-por) * lr + por * lf) / dd2
-            S_ = harm(i, j, k, i-1, j, k, rho_f, 0) * cpf / dd
+            rhocpf = harm(i, j, k, i-1, j, k, rho_f, 0) * cpf
+            B_ = ((1-por) * lr + por * lf + D_xl * rhocpf) / dd2
+            S_ = rhocpf / dd
             I_ = max(qx[i-1,j, k], 0) * S_
-            J_ = min(qx[i-1,j,k], 0) * S_
+            J_ = min(qx[i-1,j, k], 0) * S_
             if upwind == 0:
                 I_ = 0.5 * qx[i-1,j,k] * S_
                 J_ = 0.5 * qx[i-1,j,k] * S_
@@ -967,12 +1154,13 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
         if j != ny-1:
             dd = dy[j]
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
-            por = amean(i, j+1, k,  i, j, k, phi, 1)
+            por = amean(i, j+1, k,  i, j, k, phit, 1)
             lf = harm(i, j+1, k,  i, j, k, l_f, 1)
             lr = harm(i, j+1, k,  i, j, k, l_r, 1)
             cpf = harm(i, j+1, k, i, j, k, cp_f, 1)
-            C_ = ((1-por) * lr + por * lf) / dd2
-            S_ = harm(i, j, k, i, j+1, k, rho_f, 1) * cpf / dd
+            rhocpf = harm(i, j+1, k, i, j, k, rho_f, 1) * cpf
+            C_ = ((1-por) * lr + por * lf + D_yr * rhocpf) / dd2
+            S_ = rhocpf / dd
             K_ = max(qy[i,j,k], 0) * S_
             L_ = min(qy[i,j,k], 0) * S_
             if upwind == 0:
@@ -983,12 +1171,13 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
         if j != 0:
             dd = dy[j]
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
-            por = amean(i, j-1, k, i, j, k, phi, 1)
+            por = amean(i, j-1, k, i, j, k, phit, 1)
             lf = harm(i, j-1, k, i, j, k, l_f, 1)
             lr = harm(i, j-1, k, i, j, k, l_r, 1)
             cpf = harm(i, j-1, k, i, j, k, cp_f, 1)
-            D_ = ((1-por) * lr + por * lf) / dd2
-            S_ = harm(i, j, k, i, j-1, k, rho_f, 1) * cpf / dd
+            rhocpf = harm(i, j-1, k, i, j, k, rho_f, 1) * cpf
+            D_ = ((1-por) * lr + por * lf + D_yl * rhocpf) / dd2
+            S_ = rhocpf / dd
             M_ = max(qy[i,j-1,k], 0) * S_
             N_ = min(qy[i,j-1,k], 0) * S_
             if upwind == 0:
@@ -999,12 +1188,13 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
         if k != nz-1:
             dd = dz[k]
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
-            por = amean(i, j, k+1,  i, j, k, phi, 2)
+            por = amean(i, j, k+1,  i, j, k, phit, 2)
             lf = harm(i, j, k+1,  i, j, k, l_f, 2)
             lr = harm(i, j, k+1,  i, j, k, l_r, 2)
             cpf = harm(i, j, k+1, i, j, k, cp_f, 2)
-            E_ = ((1-por) * lr + por * lf) / dd2
-            S_ = harm(i, j, k, i, j, k+1, rho_f, 2) * cpf / dd
+            rhocpf = harm(i, j, k+1, i, j, k, rho_f, 2) * cpf
+            E_ = ((1-por) * lr + por * lf + D_zr * rhocpf) / dd2
+            S_ =  rhocpf / dd
             O_ = max(qz[i,j,k], 0) * S_
             P_ = min(qz[i,j,k], 0) * S_
             if upwind == 0:
@@ -1015,12 +1205,13 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
         if k != 0:
             dd = dz[k]
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
-            por = amean(i, j, k-1, i, j, k, phi, 2)
+            por = amean(i, j, k-1, i, j, k, phit, 2)
             lf = harm(i, j, k-1, i, j, k, l_f, 2)
             lr = harm(i, j, k-1, i, j, k, l_r, 2)
             cpf = harm(i, j, k-1, i, j, k, cp_f, 2)
-            F_ = ((1-por) * lr + por * lf) / dd2
-            S_ = harm(i, j, k, i, j, k-1, rho_f, 2) * cpf / dd
+            rhocpf = harm(i, j, k-1, i, j, k, rho_f, 2) * cpf
+            F_ = ((1-por) * lr + por * lf + D_zl * rhocpf) / dd2
+            S_ = rhocpf / dd
             Q_ = max(qz[i,j,k-1], 0) * S_
             R_ = min(qz[i,j,k-1], 0) * S_
             if upwind == 0:
@@ -1029,7 +1220,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
             Rnew = (F_ + Q_) * T[i,j,k-1]
             Rold = (F_ + Q_) * Tn[i,j,k-1]
         por_ = phi[i,j,k]
-        R = (por_ * rho_f[i,j,k] * cp_f[i,j,k] + \
+        R = (por_ * rho_f[i,j,k] * cp_f[i,j,k] +
               (1-por_) * rho_r[i,j,k] * cp_r[i,j,k]) / dt_T
         M = - A_ - B_ - C_ - D_ - E_ - F_ - G_ + J_ - K_ + N_ - O_ + R_
 
@@ -1037,8 +1228,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
                 (Mnew + Nnew + Onew + Pnew + Qnew + Rnew)
                 + (1-omega) * (Tn[i,j,k] * M
                 + Mold + Nold + Oold + Pold + Qold + Rold)
-                + R * Tn[i,j,k] + WT[i,j,k]) / \
-                (R - omega * M)
+                + R * Tn[i,j,k] + WT[i,j,k]) / (R - omega * M)
 
     while not converged:
         num_it += 1
@@ -1116,12 +1306,30 @@ def smolarkiewicz(C, qx, qy, qz, vx, vy, vz, dt, eps=1e-15, Sc=1.08):
 
     return vx, vy, vz
 
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,\
+      nogil=numba_nogil)
+def compute_phit(P, Pi, phi, c_f, c_r):
+    '''
+        Consideration of temporal changes in fluid storage for
+        transport equations
+
+        Goode J. (1992) Modelling Transport in Transient Ground-Water Flow:
+        An Unacknoledged Approximation. Ground Water 30,2, 257-261
+
+        FIXME: adapt to allow for porosity changes by chemistry
+    '''
+
+    return phi + ((1-phi) * c_r + phi * c_f) * (P - Pi)
+
 ################################################################################
 # SOLVER PARAMETERS ############################################################
 t      = config.t      # simulation time (s)
 dt     = config.dt     # initial time step size (s)
 t_sim = 0              # initial simulation time (s)
 n_tsteps = 0           # time step counter (-)
+
+# save initial pore pressure for porosity correction
+Pi = P.copy()
 
 # set counters etc. to zero
 numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = 0
@@ -1144,9 +1352,9 @@ print('lx: %.2f m ly: %.2f m lz: %.2f m\nnx: %d ny: %d nz: %d\n'
 print('\033[1mOMEGA_P:\033[0m', config.OMEGA_P,
       '\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
       '\033[1mOMEGA_T:\033[0m', config.OMEGA_T)
-print('\033[1mSOR_P:\033[0m', config.SOR_P,
-      '\033[1mSOR_C:\033[0m', config.SOR_C,
-      '\033[1mSOR_T:\033[0m', config.SOR_T , '\n')
+print('\033[1mSOR_P:\033[0m', round(config.SOR_P,4),
+      '\033[1mSOR_C:\033[0m', round(config.SOR_C,4),
+      '\033[1mSOR_T:\033[0m', round(config.SOR_T,4), '\n')
 
 time_start = time.time()
 plotresults()
@@ -1200,11 +1408,11 @@ while t_sim < t:
                 print('Threading layer:', threading_layer(), \
                       'Threads:', get_num_threads(), '\n')
 
-            ## calculate fluid properties
-            #if config.FLUIDPROP:
-                #C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
-                    #run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
-                                        #phi, Kx, Ky, Kz, rho_r)
+            # calculate fluid properties
+            if config.FLUIDPROP:
+                C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
+                    run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
+                                        phi, Kx, Ky, Kz, rho_r)
 
             #print('d_rho', numpy.max(numpy.abs(rho_fn-rho_f)))
 
@@ -1264,13 +1472,19 @@ while t_sim < t:
                 #P = Pn.copy() # reset P to previous time step
 
     num_it_C = 0
+
+    if config.SPECTRANS or config.HEATTRANS:
+        # compute temporal changes in fluid storage
+        phit = compute_phit(P, Pi, phi, c_f, c_r)
+
     if config.SPECTRANS:
         for n in config.SPTRANS: # repeat for all transported species
-            if numpy.sum(C[:,:,:,n]) != 0.0: # compute only if at least one C != 0
+            # compute only if at least one C != 0 and WC != 0
+            if numpy.sum(C[:,:,:,n]) != 0.0 or numpy.sum(WC[:,:,:]) != 0.0:
                 dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                        C[:,:,:,n], D_f, phi, rho_f, qx, qy, qz, dt, BC, WC, R,
-                        omega=config.OMEGA_C, SOR=config.SOR_C,
-                        C_conv=config.CONV_C, upwind=1)
+                    C[:,:,:,n], D_f, phi, phit, rho_f, qx, qy, qz, dt, BC, WC,
+                    R, omega=config.OMEGA_C, SOR=config.SOR_C,
+                    C_conv=config.CONV_C, upwind=1)
 
                 num_it_C += num_itC
 
@@ -1283,8 +1497,8 @@ while t_sim < t:
                                            vx, vy, vz, dt, eps=1e-15, Sc=1.08)
 
                     dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                        C[:,:,:,n], D_f, phi, rho_f, vx, vy, vz, dt, BC, WC, R,
-                        omega=config.OMEGA_C, SOR=config.SOR_C,
+                        C[:,:,:,n], D_f, phi, phit, rho_f, vx, vy, vz, dt, BC,
+                        WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
                         C_conv=config.CONV_C)
 
                     num_it_C += num_itC
@@ -1296,7 +1510,7 @@ while t_sim < t:
     num_it_T = 0
     if config.HEATTRANS:
         dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f, cp_f,
-                rho_f, phi, qx, qy, qz, dt, BT, WT,
+                rho_f, phi, phit, qx, qy, qz, dt, BT, WT,
                 omega=config.OMEGA_T, SOR=config.SOR_T,
                 T_conv=config.CONV_T)
 
@@ -1311,7 +1525,7 @@ while t_sim < t:
                                         eps=1e-15, Sc=1.08)
 
             dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f,
-                    cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
+                    cp_f, rho_f, phi, phit, vx, vy, vz, dt, BT, WT,
                     omega=config.OMEGA_T, SOR=config.SOR_T,
                     T_conv=config.CONV_T)
 
