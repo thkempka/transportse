@@ -1,6 +1,7 @@
 '''
-    TRANSE configuration file
+    TRANSPORTSE configuration file
 '''
+
 import os
 import sys
 import numpy
@@ -11,10 +12,10 @@ from numba import njit
 parallel_processes = 1   # number of threads 
 parallel_chemistry = 4   # number of threads 
 numba_fastmath = False   # turn off strict IEEE 754 compliance
-numba_tl = 'omp'   # numba threading layer (tbb, omp, workqueue)
+numba_tl = 'omp'         # numba threading layer (tbb, omp, workqueue)
 
 # MODEL DIMENSIONS AND SPATIAL DISCRETISATION ##################################
-lx = 51                         # model length in x-direction (m)
+lx = 51                          # model length in x-direction (m)
 ly = 51                          # model length in y-direction (m)
 lz = 30                          # model length in z-direction (m)
 nx = 51                          # number of nodes in x-direction (-)
