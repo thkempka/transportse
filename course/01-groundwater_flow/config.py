@@ -9,8 +9,8 @@ import joblib
 from numba import njit
 
 # PARALLELISATION AND TUNING ###################################################
-parallel_processes = 1   # number of threads 
-parallel_chemistry = 4   # number of threads 
+parallel_processes = 1   # number of threads
+parallel_chemistry = 1   # number of threads
 numba_fastmath = False   # turn off strict IEEE 754 compliance
 numba_tl = 'omp'         # numba threading layer (tbb, omp, workqueue)
 
@@ -34,7 +34,7 @@ t = 86400 * 1      # simulation time (s)
 
 ## PROCESSES ###################################################################
 FLUIDFLOW = True   # fluid flow (qx, qy must be given if set to False)
-SPECTRANS = False  # species transport 
+SPECTRANS = False  # species transport
 HEATTRANS = False  # heat transport
 FLUIDPROP = False  # fluid properties function
 CHEMREACT = False  # chemical reactions
@@ -45,37 +45,39 @@ DTCHEM    = 1      # chemical reactions time stepping
 ## NUMBER OF SPECIES ###########################################################
 IONS = 1			             # Species
 MINERALS = 1                     # Minerals
-                                 # 
+                                 #
 SPECIES = IONS + MINERALS        # total number of species
 SPTRANS = numpy.array([0])       # list of species to be transported
 
 # MATRIX INITIALISATION ########################################################
 ## ROCK ########################################################################
-phi   = numpy.zeros((nx, ny, nz)) # porosity (-)
-Kx    = numpy.zeros((nx, ny, nz)) # permeability (m^2)
-Ky    = numpy.zeros((nx, ny, nz)) # permeability (m^2)
-Kz    = numpy.zeros((nx, ny, nz)) # permeability (m^2)
-c_r   = numpy.zeros((nx, ny, nz)) # compressiblity (1/Pa)
-cp_r  = numpy.zeros((nx, ny, nz)) # heat capacity (J/kg/K)
-l_r   = numpy.zeros((nx, ny, nz)) # heat conductivity (W/m/K)
-rho_r = numpy.zeros((nx, ny, nz)) # average density (kg/m^3)
-l_l   = numpy.zeros((nx, ny, nz)) # longitudinal dispersion coefficient (m)
-l_t   = numpy.zeros((nx, ny, nz)) # transversal dispersion coefficient (m) 
-L     = numpy.zeros((nx, ny, nz)) # lithology marker (-)
-R     = numpy.ones((nx, ny, nz))  # retardation coefficient (-)
-mass  = numpy.zeros((3))          # mass balance matrix 
+phi   = numpy.zeros((nx, ny, nz))         # porosity (-)
+Kx    = numpy.zeros((nx, ny, nz))         # permeability (m^2)
+Ky    = numpy.zeros((nx, ny, nz))         # permeability (m^2)
+Kz    = numpy.zeros((nx, ny, nz))         # permeability (m^2)
+c_r   = numpy.ones((nx, ny, nz)) * 1e-99  # compressiblity (1/Pa)
+cp_r  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
+l_r   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
+rho_r = numpy.zeros((nx, ny, nz))         # average density (kg/m^3)
+l_l   = numpy.zeros((nx, ny, nz))         # longitudinal dispersion length (m)
+l_t   = numpy.zeros((nx, ny, nz))         # transversal dispersion length (m)
+L     = numpy.zeros((nx, ny, nz))         # lithology marker (-)
+R     = numpy.ones((nx, ny, nz))          # retardation coefficient (-)
+mass  = numpy.zeros((3))                  # mass balance matrix
 
 ## FLUID #######################################################################
-D_f   = numpy.zeros((nx, ny, nz)) # diffusion coefficient (m^2/s)
-c_f   = numpy.zeros((nx, ny, nz)) # compressiblity (1/Pa)
-cp_f  = numpy.zeros((nx, ny, nz)) # heat capacity (J/kg/K)
-l_f   = numpy.zeros((nx, ny, nz)) # heat conductivity (W/m/K)
-rho_f = numpy.zeros((nx, ny, nz)) # density (kg/m^3)
-nue   = numpy.zeros((nx, ny, nz)) # viscosity (Pa*s)
+D_fx  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
+D_fy  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
+D_fz  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
+c_f   = numpy.ones((nx, ny, nz)) * 1e-99  # compressiblity (1/Pa)
+cp_f  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
+l_f   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
+rho_f = numpy.zeros((nx, ny, nz))         # density (kg/m^3)
+nue   = numpy.zeros((nx, ny, nz))         # viscosity (Pa*s)
 
 ## PRIMARY VARIABLES ###########################################################
 P = numpy.zeros((nx, ny, nz))           # pore pressure (kg/m/s^2 = Pa)
-C = numpy.zeros((nx, ny, nz, SPECIES))  # concentration and mineral amount 
+C = numpy.zeros((nx, ny, nz, SPECIES))  # concentration and mineral amount
                                         # (unit arbitrary, e.g. mol/kgw)
 T = numpy.zeros((nx, ny, nz))           # temperature (°C)
 
@@ -99,21 +101,20 @@ qz = numpy.zeros((nx, ny, nz))     # fluid flow velocity (m/s)
 wx = int(nx/2)
 wy = int(ny/2)
 
-phi   += 0.15 
-Kx    += 5.0e-13 
+phi   += 0.15
+Kx    += 5.0e-13
 Ky    += 5.0e-13
-c_f   += 4.5e-99 
-c_r   += 1e-99 
-cp_r  += 850.0 
-cp_f  += 1000.0
-l_r   += 2.0  
+cp_r  += 850.0
+cp_f  += 4150.0
+l_r   += 2.0
 l_f   += 0.6
 nue   += 1e-3
 rho_f += 1e3
 rho_r += 2500
-D_f   += 5.0e-9
-l_l   += 0.5
-l_t   += 0.5
+D_fx  += 5.0e-9
+D_fy  = D_fx.copy()
+l_l   += 0.
+l_t   += 0.
 
 # BOUNDARY CONDITIONS ##########################################################
 BP[0,:,:] = 1        # Left boundary open (Dirichlet-BC)
@@ -125,12 +126,12 @@ BP[:,-1,:] = 1       # Top boundary open (Dirichlet-BC)
 WP[wx,wy,:] = 50 / 3600 / dx[wx] / dy[wy] / dz[0]
 
 # INITIAL CONDITIONS ###########################################################
-P[:,:,:] = 1.5e7             # Initial reservoir pressure of 15 MPa
+P[:,:,:] = 1.5e7             # Initial reservoir pressure of
 
 # USER FLUID PROPERTY FUNCTION #################################################
 @njit
-def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, 
-                     Kx, Ky, Kz, rho_r):
+def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
+                     Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r):
     '''
         nue     viscosity (Pa*s)
         rho_f   density (kg/m^3)
@@ -138,11 +139,12 @@ def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
         cp_f    heat capacity (J/kg/K)
         l_f     thermal conductivity (W/m/K)
         D_f     diffusion coefficient (m^2/s)
+        ...
     '''
 
     return C, T , P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, \
-            rho_r
-    
+            D_fx, D_fy, D_fz, rho_r
+ 
 #===============================================================================
 # USER CHEMICAL REACTIONS FUNCTION #############################################
 
@@ -156,9 +158,9 @@ if CHEMREACT:
     phreeqc = phreeqc_mod.IPhreeqc()
     phreeqc.load_database(r"phreeqc.dat")
 
-def chemical_reactions(i,j,k): 
+def chemical_reactions(i,j,k):
 
-    return C[i,j,k], rho_f[i,j,k], phi[i,j,k], Kx[i,j,k]
+    return C[i,j,k], rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], Kz[i,j,k]
 
 #===============================================================================
 
@@ -167,11 +169,7 @@ def chemical_reactions(i,j,k):
 dt =     .001  # initial time step size
 dt_max = 86400
 
-# CONJUGATE GRADIENT SOLVER ####################################################
-PCG = False
-
 ## IMPLICIT OR EXPLICIT SOLUTION (0 <= OMEGA <= 1)
-OMEGA_P = 1
 OMEGA_C = 1
 OMEGA_T = 1
 
@@ -185,36 +183,15 @@ SOR_C = 1.0
 SOR_T = 1.0
 
 ## CONVERGENCE CRITERION FOR L2-NORM ###########################################
-CONV_P = 1e-9
-CONV_C = 1e-9
-CONV_T = 1e-9
+CONV_P = 1e-5
+CONV_C = 1e-5
+CONV_T = 1e-5
 
 ## SMOLARKIEWICZ ANTI-DIFFUSION STEP ###########################################
 SMOLAR_C = False
 SMOLAR_T = False
 
 # OUTPUT PARAMETERS ############################################################
-PLOTSAVE = False
-PLOTTIME = numpy.array([86400*0.0, \
-                        86400*0.1, \
-                        86400*0.2, \
-                        86400*0.3, \
-                        86400*0.4, \
-                        86400*0.5, \
-                        86400*0.6, \
-                        86400*0.7, \
-                        86400*0.8, \
-                        86400*0.9, \
-                        86400*1.0, \
-                        86400*1.25, \
-                        86400*1.5, \
-                        86400*1.75, \
-                        86400*2.0, \
-                        86400*2.25, \
-                        86400*2.5, \
-                        86400*2.75, \
-                        86400*3.0, \
-                        86400*3.25, \
-                        86400*3.5, \
-                        86400*3.75, \
-                        86400*4.0])    
+PRINTOUT = 1        # output interval
+PLOTSAVE = True     # save results
+PLOTTIME = numpy.linspace(0,1,11) * t
