@@ -30,11 +30,11 @@ from multiprocessing import Pool, cpu_count
 # check if config file name is provided
 if len(sys.argv) < 2:
     print('\n\tPlease use this command to run TRANSPORTSE:\n' + \
-         '\033[1m\tipython -i tse.py [path]<config file name>\033[0m' + \
+         '\033[1m\tpython -i [path]tse.py [path]<config file name>\033[0m' + \
          '\n\n\t\033[1mExamples:\033[0m' + \
-         '\n\tipython -i tse.py config.py' + \
-         '\n\tipython -i tse.py simulation/config.py' + \
-         '\n\tipython -i tse.py ~/tse/simulation/config.py\n'
+         '\n\tpython -i tse.py config.py' + \
+         '\n\tpython -i tse.py simulation/config.py' + \
+         '\n\tpython -i tse.py ~/tse/simulation/config.py\n'
             )
     sys.exit()
 
@@ -111,11 +111,13 @@ l_r   = config.l_r           # heat conductivity (W/m/K)
 rho_r = config.rho_r         # density (kg/m^3)
 l_l   = config.l_l           # longitudinal dispersion length (m)
 l_t   = config.l_t           # transversal dispersion length (m)
-L     = config.L             # Lithology (-)
+L     = config.L             # lithology (-)
 R     = config.R             # retardation coefficient (-)
 
 ## FLUID #######################################################################
-D_f   = config.D_f           # diffusion coefficient (W/m/K)
+D_fx  = config.D_fx          # diffusion coefficient (W/m/K)
+D_fy  = config.D_fy          # diffusion coefficient (W/m/K)
+D_fz  = config.D_fz          # diffusion coefficient (W/m/K)
 c_f   = config.c_f           # compressiblity (1/Pa)
 cp_f  = config.cp_f          # heat capacity (J/kg/K)
 l_f   = config.l_f           # heat conductivity (W/m/K)
@@ -150,10 +152,6 @@ vx = numpy.zeros((nx,ny,nz)) # Smolarkiewicz velocity (m/s)
 vy = numpy.zeros((nx,ny,nz)) # Smolarkiewicz velocity (m/s)
 vz = numpy.zeros((nx,ny,nz)) # Smolarkiewicz velocity (m/s)
 
-## STORAGE CORRECTION FOR TRANSPORT ############################################
-phit = numpy.zeros((nx,ny,nz)) # Porosity for transport equations (-)
-Pi   = numpy.zeros((nx,ny,nz)) # Initial pore pressure (-)
-
 ## PECLET MATRICES #############################################################
 PeC = numpy.zeros((nx,ny,nz,3)) # Smolarkiewicz velocity (m/s)
 PeT = numpy.zeros((nx,ny,nz,3)) # Smolarkiewicz velocity (m/s)
@@ -167,30 +165,32 @@ for k in range(nz):
                 GP[i,j,k] = True
 
 # CALCULATE INITIAL FLUIDPROPERTIES ############################################
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
       nogil=numba_nogil)
 def run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
-                        Kx, Ky, Kz, rho_r):
+                        Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r):
     for k in prange(nz):
         for j in prange(ny):
             for i in prange(nx):
                 C[i,j,k], T[i,j,k], P[i,j,k], nue[i,j,k], rho_f[i,j,k], \
                     c_f[i,j,k], cp_f[i,j,k], l_f[i,j,k], cp_r[i,j,k], \
                     l_r[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], \
-                    Kz[i,j,k], rho_r[i,j,k] = \
+                    Kz[i,j,k], D_fx[i,j,k], D_fy[i,j,k], D_fz[i,j,k], \
+                    rho_r[i,j,k] = \
                     config.fluid_properties(C[i,j,k], T[i,j,k],
                         P[i,j,k], nue[i,j,k], rho_f[i,j,k], c_f[i,j,k],
                         cp_f[i,j,k], l_f[i,j,k], cp_r[i,j,k], l_r[i,j,k],
                         phi[i,j,k], Kx[i,j,k], Ky[i,j,k], Kz[i,j,k],
-                                rho_r[i,j,k])
+                        D_fx[i,j,k], D_fy[i,j,k], D_fz[i,j,k], rho_r[i,j,k])
 
     return C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, \
-            rho_r
+            D_fx, D_fy, D_fz, rho_r
 
 if config.FLUIDPROP:
-    C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
-        run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, \
-                            phi, Kx, Ky, Kz, rho_r)
+    C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, \
+        D_fx, D_fy, D_fz, rho_r = \
+        run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
+                            phi, Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r)
 
 # SUPPORT FUNCTIONS ############################################################
 
@@ -208,17 +208,6 @@ def alpha(i1, j1, k1, i2, j2, k2, nue, rho_f, K, q, d, d1, d2, n):
             harm(i1, j1, k1, i2, j2, k2, nue, n) /
             (d[d2] * (d[d1]+d[d2])*0.5)
             * (a * rho_f[i1,j1,k1] + (1-a) * rho_f[i2,j2,k2]))
-
-@njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
-def upwnd(i1, j1, k1, i2, j2, k2, X, q):
-    '''
-        Upwind parameter
-        i1 > i2, j1 > j2
-    '''
-    a = 0
-    if q[i2, j2, k2] < 0:
-        a = 1
-    return (a * X[i1,j1,k1] + (1-a) * X[i2,j2,k2])
 
 @njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
 def beta_g(i1, j1, k1, i2, j2, k2, rho_f, d):
@@ -289,17 +278,17 @@ def plotresults():
                                   compress=3)
                 PLOTINDEX += 1
 
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
       nogil=numba_nogil)
-def peclet_C(PeC, qx, qy, qz, D_f):
+def peclet_C(PeC, qx, qy, qz, D_fx):
     for k in prange(nz):
         for j in prange(ny):
             for i in prange(nx):
                 if BC[i,j,k] == 0:
-                    if D_f[i,j,k] != 0:
-                        PeC[i,j,k,0] = abs(qx[i,j,k]) / D_f[i,j,k] * dx[i]
-                        PeC[i,j,k,1] = abs(qy[i,j,k]) / D_f[i,j,k] * dy[j]
-                        PeC[i,j,k,2] = abs(qz[i,j,k]) / D_f[i,j,k] * dz[k]
+                    if D_fx[i,j,k] != 0:
+                        PeC[i,j,k,0] = abs(qx[i,j,k]) / D_fx[i,j,k] * dx[i]
+                        PeC[i,j,k,1] = abs(qy[i,j,k]) / D_fx[i,j,k] * dy[j]
+                        PeC[i,j,k,2] = abs(qz[i,j,k]) / D_fx[i,j,k] * dz[k]
                     else:
                         PeC[i,j,k,0] = numpy.nan
                         PeC[i,j,k,1] = numpy.nan
@@ -308,21 +297,21 @@ def peclet_C(PeC, qx, qy, qz, D_f):
     return numpy.max(PeC[:,:,:,0]), numpy.max(PeC[:,:,:,1]), \
             numpy.max(PeC[:,:,:,2])
 
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
       nogil=numba_nogil)
 def peclet_T(PeT, qx, qy, qz, rho_f, cp_f, phi, l_r, l_f):
     for k in prange(nz):
         for j in prange(ny):
             for i in prange(nx):
                 if BT[i,j,k] == 0:
-                    PeT[i,j,k,0] = (abs(qx[i,j,k]) * rho_f[i,j,k] * cp_f[i,j,k] /
-                        ((1-phi[i,j,k]) * l_r[i,j,k] + phi[i,j,k]
+                    PeT[i,j,k,0] = (abs(qx[i,j,k]) * rho_f[i,j,k] * cp_f[i,j,k]
+                        / ((1-phi[i,j,k]) * l_r[i,j,k] + phi[i,j,k]
                         * l_f[i,j,k])*dx[i])
-                    PeT[i,j,k,1] = (abs(qy[i,j,k]) * rho_f[i,j,k] * cp_f[i,j,k] /
-                        ((1-phi[i,j,k]) * l_r[i,j,k] + phi[i,j,k]
+                    PeT[i,j,k,1] = (abs(qy[i,j,k]) * rho_f[i,j,k] * cp_f[i,j,k]
+                        / ((1-phi[i,j,k]) * l_r[i,j,k] + phi[i,j,k]
                         * l_f[i,j,k])*dy[j])
-                    PeT[i,j,k,2] = (abs(qz[i,j,k]) * rho_f[i,j,k] * cp_f[i,j,k] /
-                        ((1-phi[i,j,k]) * l_r[i,j,k] + phi[i,j,k]
+                    PeT[i,j,k,2] = (abs(qz[i,j,k]) * rho_f[i,j,k] * cp_f[i,j,k]
+                        / ((1-phi[i,j,k]) * l_r[i,j,k] + phi[i,j,k]
                         * l_f[i,j,k])*dz[k])
 
     return numpy.max(PeT[:,:,:,0]), numpy.max(PeT[:,:,:,1]), \
@@ -330,14 +319,14 @@ def peclet_T(PeT, qx, qy, qz, rho_f, cp_f, phi, l_r, l_f):
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
       nogil=numba_nogil)
-def explicit_C(D_f, phi):
+def explicit_C(D_fx, phi):
     dt_NeC = 1e100
     for k in range(nz):
         for j in range(ny):
             for i in range(nx):
                 if L[i,j,k] != 0 and L[i,j,k] != 6:
                     dt_NeC = min(dt_NeC,
-                        0.45 * D_f[i,j,k] / phi[i,j,k] /
+                        0.45 * D_fx[i,j,k] / phi[i,j,k] /
                         (1 / dx[i]**2 + 1 / dy[j]**2 + 1/dz[k]**2))
 
     return dt_NeC
@@ -351,15 +340,13 @@ def index_list(BC):
             for i in range(nx):
                 if BC[i,j,k] != 1:
                     chem_list.append((i, j, k))
-                    #chem_list.append((i,j,k,numpy.round(C[i,j,k],8)
-                        #,numpy.round(rho_f[i,j,k],4)))
     return chem_list
 
 # SOLVER ROUTINES ##############################################################
 
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
       nogil=numba_nogil)
-def compute_Pi(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
+def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
               SOR=1.0, max_it=20000, inc_it=1.05, max_dt=dt_max,
               min_dt=1e-8, P_conv=1e-10):
     t_P = 0
@@ -375,30 +362,26 @@ def compute_Pi(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
         if i != nx-1:
             A_ = alpha(i+1, j, k, i, j, k, nue, rho_f, Kx, qx, dx, i+1, i, 0)
             Anew = A_*P[i+1, j, k]
-            #B_ = beta_g(i, j, k, i, j, k, rho_f, 0)
             B_ = beta_g(i+1, j, k, i, j, k, rho_f, 0)
         if i != 0:
             C_ = alpha(i, j, k, i-1, j, k, nue, rho_f, Kx, qx, dx, i-1, i, 0)
             Cnew = C_*P[i-1, j, k]
-            #D_ = beta_g(i, j, k, i, j, k, rho_f, 0)
             D_ = beta_g(i, j, k, i-1, j, k, rho_f, 0)
         if j != ny-1:
             E_ = alpha(i, j+1, k, i, j, k, nue, rho_f, Ky, qy, dy, j+1, j, 1)
             Enew = E_*P[i, j+1, k]
-            F_ = 0 # beta_g(i, j+1, k, i, j, k, rho_f, 1)
+            F_ = 0
         if j != 0:
             G_ = alpha(i, j, k, i, j-1, k, nue, rho_f, Ky, qy, dy, j-1, j, 1)
             Gnew = G_*P[i, j-1, k]
-            H_ = 0 # beta_g(i, j, k, i, j-1, k, rho_f, 1)
+            H_ = 0
         if k != nz-1:
             I_ = alpha(i, j, k+1, i, j, k, nue, rho_f, Kz, qz, dz, k+1, k, 2)
             Inew = I_*P[i, j, k+1]
-            #J_ = beta_g(i, j, k, i, j, k, rho_f, 2)
             J_ = beta_g(i, j, k+1, i, j, k, rho_f, 2)
         if k != 0:
             K_ = alpha(i, j, k, i, j, k-1, nue, rho_f, Kz, qz, dz, k-1, k, 2)
             Knew = K_*P[i, j, k-1]
-            #L_ = beta_g(i, j, k, i, j, k, rho_f, 2)
             L_ = beta_g(i, j, k, i, j, k-1, rho_f, 2)
 
         por = phi[i,j,k]
@@ -444,122 +427,8 @@ def compute_Pi(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
             converged = True
             t_P += dt_P
             # Increase time step by factor inc_it, while not exceeding max_dt
-            # print(' t:', t_P, 'P [', num_it, ']: Increasing dt:', dt_P, '=>', \
-            #       min(dt_P*inc_it, max_dt) , '(s)')
             if num_sub_it < max_it/2:
                 dt_P = min(dt_P*inc_it, max_dt)
-            # Drop out after achieving convergence criterion and
-            # print('++ CONVERGED     - new dt:', dt_P, 'L2:', diff, '# it:', num_it)
-            # break
-        else:
-            converged = False
-            if num_sub_it >= max_it or (diff >= 1 and num_sub_it > 1):
-                print(' t:', t_P, 'P [', num_it, ']: Reducing dt:', dt_P, \
-                      '=>', dt_P/2, '(s) L2:', diff)
-                dt_P = dt_P/2 # decrease time step size
-                num_sub_it = 0
-                P = Pn.copy() # reset P
-            if dt_P <= min_dt:
-                break
-
-    return t_P, dt_P, P, Pn, converged, num_it
-
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
-      nogil=numba_nogil)
-def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
-              omega=1, SOR=1.0, max_it=20000, inc_it=1.05, max_dt=dt_max,
-              min_dt=1e-8, P_conv=1e-10):
-    t_P = 0
-    converged = False
-    num_it = 0
-    num_sub_it = 0
-    Pn = P.copy()
-
-    def solve(i,j,k):
-        A_ = B_ = C_ = D_ = E_ = F_ = G_ = H_ = I_ = J_ = K_ = L_ = \
-        Anew = Cnew = Enew = Gnew = Inew = Knew = \
-        Aold = Cold = Eold = Gold = Iold = Kold = 0
-
-        if i != nx-1:
-            A_ = alpha(i+1, j, k, i, j, k, nue, rho_f, Kx, qx, dx, i+1, i, 0)
-            Anew = A_*P[i+1, j, k]
-            Aold = A_*Pn[i+1, j, k]
-            B_ = beta_g(i+1, j, k, i, j, k, rho_f, 0)
-        if i != 0:
-            C_ = alpha(i, j, k, i-1, j, k, nue, rho_f, Kx, qx, dx, i-1, i, 0)
-            Cnew = C_*P[i-1, j, k]
-            Cold = C_*Pn[i-1, j, k]
-            D_ = beta_g(i, j, k, i-1, j, k, rho_f, 0)
-        if j != ny-1:
-            E_ = alpha(i, j+1, k, i, j, k, nue, rho_f, Ky, qy, dy, j+1, j, 1)
-            Enew = E_*P[i, j+1, k]
-            Eold = E_*Pn[i, j+1, k]
-            F_ = 0 # beta_g(i, j+1, k, i, j, k, rho_f, 1)
-        if j != 0:
-            G_ = alpha(i, j, k, i, j-1, k, nue, rho_f, Ky, qy, dy, j-1, j, 1)
-            Gnew = G_*P[i, j-1, k]
-            Gold = G_*Pn[i, j-1, k]
-            H_ = 0 # beta_g(i, j, k, i, j-1, k, rho_f, 1)
-        if k != nz-1:
-            I_ = alpha(i, j, k+1, i, j, k, nue, rho_f, Kz, qz, dz, k+1, k, 2)
-            Inew = I_*P[i, j, k+1]
-            Iold = I_*Pn[i, j, k+1]
-            J_ = beta_g(i, j, k+1, i, j, k, rho_f, 2)
-        if k != 0:
-            K_ = alpha(i, j, k, i, j, k-1, nue, rho_f, Kz, qz, dz, k-1, k, 2)
-            Knew = K_*P[i, j, k-1]
-            Kold = K_*Pn[i, j, k-1]
-            L_ = beta_g(i, j, k, i, j, k-1, rho_f, 2)
-
-        por = phi[i,j,k]
-        R = rho_f[i,j,k] * (c_r[i,j,k]*(1-por)+por*c_f[i,j,k]) / dt_P
-        M = A_ + C_ + E_ + G_ + I_ + K_
-
-        return (1-SOR) * P[i,j,k] + SOR * (omega *
-            (Anew + A_*B_ + Cnew - C_*D_ + Enew + E_*F_
-             + Gnew - G_*H_ + Inew + I_*J_ + Knew - K_*L_)
-            + (1-omega) * (-Pn[i,j,k]*M +
-            Aold + A_*B_ + Cold - C_*D_ + Eold + E_*F_
-             + Gold - G_*H_ + Iold + I_*J_ + Kold - K_*L_)
-            + R*Pn[i,j,k] + WP[i,j,k] * rho_f[i,j,k]) / (R + omega * M)
-
-    while not converged:
-        num_it += 1
-        num_sub_it += 1
-        Pold = P.copy()
-
-        if numba_parallel is False: # sequential SOR
-            for k in range(nz):
-                for j in range(ny):
-                    for i in range(nx):
-                        if not BP[i,j,k]:
-                            P[i,j,k] = solve(i,j,k)
-        else: # implementation of black-red stencil scheme for SOR
-            for k in prange(nz):
-                for j in prange(ny):
-                    for i in prange(nx):
-                        if GP[i,j,k]:
-                            if not BP[i,j,k]:
-                                P[i,j,k] = solve(i,j,k)
-            for k in prange(nz):
-                for j in prange(ny):
-                    for i in prange(nx):
-                        if not GP[i,j,k]:
-                            if not BP[i,j,k]:
-                                P[i,j,k] = solve(i,j,k)
-
-        diff = l2_norm(P, Pold, 'P')
-        if diff < P_conv or omega == 0:
-            converged = True
-            t_P += dt_P
-            # Increase time step by factor inc_it, while not exceeding max_dt
-            # print(' t:', t_P, 'P [', num_it, ']: Increasing dt:', dt_P, '=>', \
-            #       min(dt_P*inc_it, max_dt) , '(s)')
-            if num_sub_it < max_it/2:
-                dt_P = min(dt_P*inc_it, max_dt)
-            # Drop out after achieving convergence criterion and
-            # print('++ CONVERGED     - new dt:', dt_P, 'L2:', diff, '# it:', num_it)
-            # break
         else:
             converged = False
             if num_sub_it >= max_it or (diff >= 1 and num_sub_it > 1):
@@ -600,11 +469,12 @@ def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
                                 numpy.cos(beta)))
     return qx, qy, qz
 
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
       nogil=numba_nogil)
-def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
-                SOR=1.0, max_it=20000, inc_it=1.00, max_dt=dt_max, min_dt=1e-8,
-                C_conv=1e-10, upwind=1):
+def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
+        omega=1, SOR=1.0, max_it=20000, inc_it=1.00, max_dt=dt_max, min_dt=1e-8,
+        C_conv=1e-10, upwind=1):
+
     t_C = 0
     converged = False
     num_it = 0
@@ -797,9 +667,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if i != nx-1:
             dd = dx[i]
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
-            ph = amean(i+1, j, k, i, j, k, phit, 0)
+            ph = amean(i+1, j, k, i, j, k, phi, 0)
             re = harm(i+1, j, k, i, j, k, RC, 0)
-            A_ = (harm(i+1, j, k, i, j, k, D_f, 0) * ph + D_xr ) / dd2 / re
+            A_ = (harm(i+1, j, k, i, j, k, D_fx, 0) * ph + D_xr ) / dd2 / re
             G_ = max(qx[i,j,k], 0) / dd / re
             H_ = min(qx[i,j,k], 0) / dd / re
             if upwind == 0:
@@ -810,9 +680,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if i != 0:
             dd = dx[i]
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
-            ph = amean(i-1, j, k, i, j, k, phit, 0)
+            ph = amean(i-1, j, k, i, j, k, phi, 0)
             re = harm(i-1, j, k, i, j, k, RC, 0)
-            B_ = (harm(i-1, j, k, i, j, k, D_f, 0) * ph + D_xl ) / dd2 / re
+            B_ = (harm(i-1, j, k, i, j, k, D_fx, 0) * ph + D_xl ) / dd2 / re
             I_ = max(qx[i-1,j,k], 0) / dd / re
             J_ = min(qx[i-1,j,k], 0) / dd / re
             if upwind == 0:
@@ -823,9 +693,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if j != ny-1:
             dd = dy[j]
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
-            ph = amean(i, j+1, k, i, j, k, phit, 1)
+            ph = amean(i, j+1, k, i, j, k, phi, 1)
             re = harm(i, j+1, k, i, j, k, RC, 1)
-            C_ = (harm(i, j+1, k, i, j, k, D_f, 1) * ph + D_yr ) / dd2 / re
+            C_ = (harm(i, j+1, k, i, j, k, D_fy, 1) * ph + D_yr ) / dd2 / re
             K_ = max(qy[i,j,k], 0) / dd / re
             L_ = min(qy[i,j,k], 0) / dd / re
             if upwind == 0:
@@ -836,9 +706,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if j != 0:
             dd = dy[j]
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
-            ph = amean(i, j-1, k, i, j, k, phit, 1)
+            ph = amean(i, j-1, k, i, j, k, phi, 1)
             re = harm(i, j-1, k, i, j, k, RC, 1)
-            D_ = (harm(i, j-1, k, i, j, k, D_f, 1) * ph + D_yl ) / dd2 / re
+            D_ = (harm(i, j-1, k, i, j, k, D_fy, 1) * ph + D_yl ) / dd2 / re
             M_ = max(qy[i,j-1,k], 0) / dd / re
             N_ = min(qy[i,j-1,k], 0) / dd / re
             if upwind == 0:
@@ -849,9 +719,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if k != nz-1:
             dd = dz[k]
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
-            ph = amean(i, j, k+1, i, j, k, phit, 2)
+            ph = amean(i, j, k+1, i, j, k, phi, 2)
             re = harm(i, j, k+1, i, j, k, RC, 2)
-            E_ = (harm(i, j, k+1, i, j, k, D_f, 2) * ph + D_zr ) / dd2 / re
+            E_ = (harm(i, j, k+1, i, j, k, D_fz, 2) * ph + D_zr ) / dd2 / re
             O_ = max(qz[i,j,k], 0) / dd / re
             P_ = min(qz[i,j,k], 0) / dd / re
             if upwind == 0:
@@ -862,9 +732,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         if k != 0:
             dd = dz[k]
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
-            ph = amean(i, j, k-1, i, j, k, phit, 2)
+            ph = amean(i, j, k-1, i, j, k, phi, 2)
             re = harm(i, j, k-1, i, j, k, RC, 2)
-            F_ = (harm(i, j, k-1, i, j, k, D_f, 2) * ph + D_zl ) / dd2 / re
+            F_ = (harm(i, j, k-1, i, j, k, D_fz, 2) * ph + D_zl ) / dd2 / re
             Q_ = max(qz[i,j,k-1], 0) / dd / re
             R_ = min(qz[i,j,k-1], 0) / dd / re
             if upwind == 0:
@@ -913,7 +783,7 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
         else:
             converged = False
             if num_sub_it >= max_it:
-                print(' t:', t_C, 'C [', num_it, ']: Reducing dt:', dt_C, \
+                print(' t:', t_C, 'C [', num_it, ']: Reducing dt:', dt_C,
                         '=>', dt_C/2, '(s) L2:', diff)
                 dt_C = dt_C/2 # decrease time step size
                 num_sub_it = 0
@@ -923,9 +793,9 @@ def compute_C(C, D_f, phi, phit, rho_f, qx, qy, qz, dt_C, BC, WC, RC, omega=1,
 
     return t_C, dt_C, C, converged, num_it
 
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
       nogil=numba_nogil)
-def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
+def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
               SOR=1.0, max_it=100, inc_it=1.05, max_dt=dt_max, min_dt=1e-8,
               T_conv=1e-10, upwind=1):
     t_T = 0
@@ -1120,7 +990,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
         if i != nx-1:
             dd = dx[i]
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
-            por = amean(i, j, k, i+1, j, k, phit, 0)
+            por = amean(i, j, k, i+1, j, k, phi, 0)
             lf = harm(i, j, k, i+1, j, k, l_f, 0)
             lr = harm(i, j, k, i+1, j, k, l_r, 0)
             cpf = harm(i, j, k, i+1, j, k, cp_f, 0)
@@ -1137,7 +1007,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
         if i != 0:
             dd = dx[i]
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
-            por = amean(i, j, k, i-1, j, k, phit, 0)
+            por = amean(i, j, k, i-1, j, k, phi, 0)
             lf = harm(i, j, k, i-1, j, k, l_f, 0)
             lr = harm(i, j, k, i-1, j, k, l_r, 0)
             cpf = harm(i, j, k, i-1, j, k, cp_f, 0)
@@ -1154,7 +1024,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
         if j != ny-1:
             dd = dy[j]
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
-            por = amean(i, j+1, k,  i, j, k, phit, 1)
+            por = amean(i, j+1, k,  i, j, k, phi, 1)
             lf = harm(i, j+1, k,  i, j, k, l_f, 1)
             lr = harm(i, j+1, k,  i, j, k, l_r, 1)
             cpf = harm(i, j+1, k, i, j, k, cp_f, 1)
@@ -1171,7 +1041,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
         if j != 0:
             dd = dy[j]
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
-            por = amean(i, j-1, k, i, j, k, phit, 1)
+            por = amean(i, j-1, k, i, j, k, phi, 1)
             lf = harm(i, j-1, k, i, j, k, l_f, 1)
             lr = harm(i, j-1, k, i, j, k, l_r, 1)
             cpf = harm(i, j-1, k, i, j, k, cp_f, 1)
@@ -1188,7 +1058,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
         if k != nz-1:
             dd = dz[k]
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
-            por = amean(i, j, k+1,  i, j, k, phit, 2)
+            por = amean(i, j, k+1,  i, j, k, phi, 2)
             lf = harm(i, j, k+1,  i, j, k, l_f, 2)
             lr = harm(i, j, k+1,  i, j, k, l_r, 2)
             cpf = harm(i, j, k+1, i, j, k, cp_f, 2)
@@ -1205,7 +1075,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, phit, qx, qy, qz, dt_T, BT, WT, omega=1,
         if k != 0:
             dd = dz[k]
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
-            por = amean(i, j, k-1, i, j, k, phit, 2)
+            por = amean(i, j, k-1, i, j, k, phi, 2)
             lf = harm(i, j, k-1, i, j, k, l_f, 2)
             lr = harm(i, j, k-1, i, j, k, l_r, 2)
             cpf = harm(i, j, k-1, i, j, k, cp_f, 2)
@@ -1288,38 +1158,23 @@ def smolarkiewicz(C, qx, qy, qz, vx, vy, vz, dt, eps=1e-15, Sc=1.08):
                 if C[i,j,k] > 0:
                     if i < nx - 1:
                         dd = 0.5 * (dx[i+1] + dx[i])
-                        vx[i,j,k] = Sc * (abs(qx[i,j,k]) * dd - dt * qx[i,j,k]**2) \
-                                * (C[i+1,j,k] - C[i,j,k]) \
-                                / ((C[i,j,k] + C[i+1,j,k] + eps) * dd)
+                        vx[i,j,k] = (Sc * (abs(qx[i,j,k]) * dd - dt
+                            * qx[i,j,k]**2) * (C[i+1,j,k] - C[i,j,k])
+                            / ((C[i,j,k] + C[i+1,j,k] + eps) * dd))
                     if j < ny - 1:
                         dd = 0.5 * (dy[j+1] + dy[j])
-                        vy[i,j,k] = Sc * (abs(qy[i,j,k]) * dd - dt * qy[i,j,k]**2) \
-                                * (C[i,j+1,k] - C[i,j,k]) \
-                                / ((C[i,j,k] + C[i,j+1,k] + eps) * dd)
+                        vy[i,j,k] = (Sc * (abs(qy[i,j,k]) * dd - dt
+                            * qy[i,j,k]**2) * (C[i,j+1,k] - C[i,j,k])
+                            / ((C[i,j,k] + C[i,j+1,k] + eps) * dd))
                     if k < nz - 1:
                         dd = 0.5 * (dz[k+1] + dz[k])
-                        vz[i,j,k] = Sc * (abs(qz[i,j,k]) * dd - dt * qz[i,j,k]**2) \
-                                * (C[i,j,k+1] - C[i,j,k]) \
-                                / ((C[i,j,k] + C[i,j,k+1] + eps) * dd)
+                        vz[i,j,k] = (Sc * (abs(qz[i,j,k]) * dd - dt
+                            * qz[i,j,k]**2) * (C[i,j,k+1] - C[i,j,k])
+                            / ((C[i,j,k] + C[i,j,k+1] + eps) * dd))
                 else:
                     vx[i,j,k], vy[i,j,k], vz[i,j,k] = 0, 0, 0
 
     return vx, vy, vz
-
-@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,\
-      nogil=numba_nogil)
-def compute_phit(P, Pi, phi, c_f, c_r):
-    '''
-        Consideration of temporal changes in fluid storage for
-        transport equations
-
-        Goode J. (1992) Modelling Transport in Transient Ground-Water Flow:
-        An Unacknoledged Approximation. Ground Water 30,2, 257-261
-
-        FIXME: adapt to allow for porosity changes by chemistry
-    '''
-
-    return phi + ((1-phi) * c_r + phi * c_f) * (P - Pi)
 
 ################################################################################
 # SOLVER PARAMETERS ############################################################
@@ -1328,13 +1183,10 @@ dt     = config.dt     # initial time step size (s)
 t_sim = 0              # initial simulation time (s)
 n_tsteps = 0           # time step counter (-)
 
-# save initial pore pressure for porosity correction
-Pi = P.copy()
-
 # set counters etc. to zero
-numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = 0
-max_Pex_T = max_Pey_T = max_Pez_T = sum_Pex_T = sum_Pey_T = sum_Pez_T = 0
-max_Pex_C = max_Pey_C = max_Pez_C = sum_Pex_C = sum_Pey_C = sum_Pez_C = 0
+numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = \
+max_Pex_T = max_Pey_T = max_Pez_T = sum_Pex_T = sum_Pey_T = sum_Pez_T = \
+max_Pex_C = max_Pey_C = max_Pez_C = sum_Pex_C = sum_Pey_C = sum_Pez_C = \
 Pex_T = Pey_T = Pez_T = Pex_C = Pey_C = Pez_C = bc_inc = chem_inc = 0
 
 dt_max_abs = dt_max    # define maximum simulation time
@@ -1349,8 +1201,7 @@ print('lx: %.2f m ly: %.2f m lz: %.2f m\nnx: %d ny: %d nz: %d\n'
       % (numpy.min(dx), numpy.min(dy), numpy.min(dz)) + \
       'max dx: %.2f m dy %.2f m dz %.2f m' \
       % (numpy.max(dx), numpy.max(dy), numpy.max(dz)))
-print('\033[1mOMEGA_P:\033[0m', config.OMEGA_P,
-      '\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
+print('\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
       '\033[1mOMEGA_T:\033[0m', config.OMEGA_T)
 print('\033[1mSOR_P:\033[0m', round(config.SOR_P,4),
       '\033[1mSOR_C:\033[0m', round(config.SOR_C,4),
@@ -1362,17 +1213,10 @@ while t_sim < t:
     Co_Filled = False
     CFL = 0
 
-    # Neumann criteria for fluid flow as well as species and heat transport
-    if config.OMEGA_P == 0:
-        K = numpy.maximum(Kx, numpy.maximum(Ky, Kz))
-        alphamax = numpy.max(K * rho_f / nue / (phi * c_f + (1 - phi) * c_r))
-        dt_NeP = 0.45 / alphamax / (1 / dx**2 + 1 / dy**2 + 1 / dz**2)
-
+    # Neumann criteria for species and heat transport
     if config.OMEGA_C == 0:
-        dt_NeC = explicit_C(D_f, phi)
+        dt_NeC = explicit_C(D_fx, phi)
         print('dt_NeC',dt_NeC )
-    #    alphamax = numpy.max(D_f / phi)
-    #    dt_NeC = 0.45 / alphamax / (1 / dx**2 + 1 / dy**2 + 1 / dz**2)
 
     if config.OMEGA_T == 0:
         alphamax = numpy.max((phi * l_f + (1 - phi) * l_r) /
@@ -1382,23 +1226,10 @@ while t_sim < t:
     num_it_P = 0
     if config.FLUIDFLOW:
         while not Co_Filled:
-            #rho_fn = numpy.zeros((nx,ny,nz))
-            #while numpy.max(numpy.abs(rho_fn-rho_f)) >= 1e-2:
-                #rho_fn = rho_f.copy()
-            if not config.PCG:
-                dt, dt_P, P, Pn, converged_P, num_it_P = compute_Pi(P, c_f,
-                        nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
-                        max_dt=dt_max, inc_it=1.25, SOR=config.SOR_P, max_it=20000,
-                        P_conv=config.CONV_P)
-            #else:
-                #p1, p2, P, p3, p4, p5 = compute_Pi(P, c_f,
-                        #nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
-                        #max_dt=dt_max, inc_it=1.25, SOR=config.SOR_P, max_it=20000,
-                        #P_conv=1e3)
-                #dt, dt_P, P, Pn, converged_P, num_it_P = \
-                    #compute_P_CG(P, c_f, nue, rho_f, phi, Kx, Ky, Kz,
-                            #qx, qy, qz, dt, BP, WP, max_it=10000, inc_it=1.25,
-                            #max_dt=dt_max, min_dt=1e-8, P_conv=config.CONV_P)
+            dt, dt_P, P, Pn, converged_P, num_it_P = compute_P(P, c_f,
+                nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
+                max_dt=dt_max, inc_it=1.25, SOR=config.SOR_P,
+                max_it=20000, P_conv=config.CONV_P)
 
             if not converged_P:
                 sys.exit('* P CONVERGENCE ERROR ' +
@@ -1407,14 +1238,6 @@ while t_sim < t:
             if t_sim == 0 and numba_parallel:
                 print('Threading layer:', threading_layer(), \
                       'Threads:', get_num_threads(), '\n')
-
-            # calculate fluid properties
-            if config.FLUIDPROP:
-                C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
-                    run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
-                                        phi, Kx, Ky, Kz, rho_r)
-
-            #print('d_rho', numpy.max(numpy.abs(rho_fn-rho_f)))
 
             qx, qy, qz  = compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
 
@@ -1430,18 +1253,16 @@ while t_sim < t:
                 dt_CFL = 1e10
 
             dt_max_C = dt_max_T = dt_max_P = dt_max_abs
-            # dt_CFL = dt_max_C
 
             # calculate Peclet numbers for heat and species transport
             if config.HEATTRANS:
-                Pex_T, Pey_T, Pez_T = peclet_T(PeC, qx, qy, qz, rho_f, cp_f, phi, l_r, l_f)
+                Pex_T, Pey_T, Pez_T = peclet_T(PeC, qx, qy, qz, rho_f, cp_f,
+                        phi, l_r, l_f)
 
             if config.SPECTRANS:
-                Pex_C, Pey_C, Pez_C =  peclet_C(PeT, qx, qy, qz, D_f)
+                Pex_C, Pey_C, Pez_C =  peclet_C(PeT, qx, qy, qz, D_fx)
 
             # Set Neumann criteria for explicit method
-            if config.OMEGA_P == 0:
-                dt_max_P = dt_NeP
             if config.OMEGA_C == 0:
                 dt_max_C = dt_NeC
             if config.OMEGA_T == 0:
@@ -1450,40 +1271,37 @@ while t_sim < t:
             dt_max = min(dt_CFL, dt_max_C, dt_max_T, dt_max_P)
 
             # print time step and convergence control data
-            if config.OMEGA_P + config.OMEGA_C + config.OMEGA_T < 3:
-                print(' [dt_NeP]: %8.2e [dt_NeC] %8.2e [dt_NeT] %8.2e' %
-                      ( dt_max_P, dt_max_C, dt_max_T) )
-            print(' [%%CFL] %6.2f [PTx] %6.4f [PTy] %6.4f [PTz] %6.4f'
-                  % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T) +
-                  ' [PCx] %6.4f [PCy] %6.4f [PCz] %6.4f' % (Pex_C, Pey_C,
-                                                            Pez_C))
-            print(' [P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f [C+] %6.4f'
-                  % (numpy.max(P), numpy.min(P), numpy.max(T), numpy.min(T),
-                     numpy.max(C)) +
-                  ' [C-] %6.4f' % (numpy.min(C)))
+            if n_tsteps % config.PRINTOUT == 0:
+                if config.OMEGA_C + config.OMEGA_T < 2:
+                    print(' [dt_NeC] %8.2e [dt_NeT] %8.2e' %
+                          ( dt_max_C, dt_max_T) )
+
+                print(' [%%CFL] %6.2f [PTx] %6.4f [PTy] %6.4f [PTz] %6.4f'
+                      % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T) +
+                      ' [PCx] %6.4f [PCy] %6.4f [PCz] %6.4f' % (Pex_C, Pey_C,
+                                                                Pez_C))
+                print(' [P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f [C+] %6.4f'
+                      % (numpy.max(P), numpy.min(P), numpy.max(T), numpy.min(T),
+                         numpy.max(C)) +
+                      ' [C-] %6.4f' % (numpy.min(C)))
 
             Co_Filled = True
             if dt > dt_max*1.0:
                 numitP += num_it_P # count also CFL correction iterations
                 num_CFL += num_it_P
                 CFL += 1
-                # print(' CFL time step reduction: dt: %8.3e => %8.3e (s)' % (dt, dt_max))
                 dt = dt_max #/2 # reduce dt to match Co-Kriterium
                 #P = Pn.copy() # reset P to previous time step
 
     num_it_C = 0
-
-    if config.SPECTRANS or config.HEATTRANS:
-        # compute temporal changes in fluid storage
-        phit = compute_phit(P, Pi, phi, c_f, c_r)
 
     if config.SPECTRANS:
         for n in config.SPTRANS: # repeat for all transported species
             # compute only if at least one C != 0 and WC != 0
             if numpy.sum(C[:,:,:,n]) != 0.0 or numpy.sum(WC[:,:,:]) != 0.0:
                 dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                    C[:,:,:,n], D_f, phi, phit, rho_f, qx, qy, qz, dt, BC, WC,
-                    R, omega=config.OMEGA_C, SOR=config.SOR_C,
+                    C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt,
+                    BC, WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
                     C_conv=config.CONV_C, upwind=1)
 
                 num_it_C += num_itC
@@ -1497,8 +1315,8 @@ while t_sim < t:
                                            vx, vy, vz, dt, eps=1e-15, Sc=1.08)
 
                     dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                        C[:,:,:,n], D_f, phi, phit, rho_f, vx, vy, vz, dt, BC,
-                        WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
+                        C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, vx, vy, vz,
+                        dt, BC, WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
                         C_conv=config.CONV_C)
 
                     num_it_C += num_itC
@@ -1510,7 +1328,7 @@ while t_sim < t:
     num_it_T = 0
     if config.HEATTRANS:
         dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f, cp_f,
-                rho_f, phi, phit, qx, qy, qz, dt, BT, WT,
+                rho_f, phi, qx, qy, qz, dt, BT, WT,
                 omega=config.OMEGA_T, SOR=config.SOR_T,
                 T_conv=config.CONV_T)
 
@@ -1525,7 +1343,7 @@ while t_sim < t:
                                         eps=1e-15, Sc=1.08)
 
             dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f,
-                    cp_f, rho_f, phi, phit, vx, vy, vz, dt, BT, WT,
+                    cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
                     omega=config.OMEGA_T, SOR=config.SOR_T,
                     T_conv=config.CONV_T)
 
@@ -1535,9 +1353,6 @@ while t_sim < t:
                 sys.exit('* T CONVERGENCE ERROR' +
                          ' - check dt and T_conv in compute_T')
 
-        #if (not config.FLUIDFLOW) and (not config.SPECTRANS):
-            #dt = min(dt_max_abs,dt_T)
-
     # calculate chemical reactions
     if config.CHEMREACT:
         if t_sim > 0:
@@ -1545,29 +1360,21 @@ while t_sim < t:
         else:
             chem_inc = 0
             config.dt_chem = dt
-            #chem_inc += dt
 
         if chem_inc >= config.DTCHEM:
             config.dt_chem = chem_inc
             chem_inc = 0
-        #chem_list = []
         chem_list = index_list(BC)
         if chem_list != [] and chem_inc == 0:
             with Pool(config.parallel_chemistry) as p:
                 results = p.starmap(config.chemical_reactions, chem_list)
             for num, l in enumerate(chem_list):
                 C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
-                phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]] = \
+                phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
+                Ky[l[0],l[1],l[2]], Kz[l[0],l[1],l[2]] = \
                         results[num][0], results[num][1], \
-                        results[num][2], results[num][3]
-                #C[l[0],l[1],l[2]], T[l[0],l[1],l[2]], P[l[0],l[1],l[2]], \
-                        #rho_f[l[0],l[1],l[2]], phi[l[0],l[1],l[2]] = \
-                        #results[num][0], results[num][1], results[num][2], \
-                        #results[num][3], results[num][4]
-
-            # set Ky and Kz to Kx
-            Ky = Kx.copy()
-            Kz = Kx.copy()
+                        results[num][2], results[num][3], \
+                        results[num][4], results[num][5]
 
     # dynamic boundary conditions
     if config.DYNAMICBC:
@@ -1580,9 +1387,10 @@ while t_sim < t:
 
     # calculate fluid properties
     if config.FLUIDPROP:
-        C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, Kx, Ky, Kz, rho_r = \
+        C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, \
+            Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r = \
             run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
-                                phi, Kx, Ky, Kz, rho_r)
+                                phi, Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r)
 
     t_sim += dt
     n_tsteps += 1
@@ -1603,9 +1411,10 @@ while t_sim < t:
     sum_Pez_C += Pez_C
     max_DT = max(max_DT, dt)
 
-    print('[t/s] %8.2e/%8.2e [dt/s] \033[1m%8.2e\033[0m [S] %8d [P] %5d [C] %5d'
-          % (t_sim, t, dt, n_tsteps, num_it_P, num_it_C) +
-          ' [T] %5d [CFL] %1d' % (num_it_T, CFL))
+    if n_tsteps % config.PRINTOUT == 0:
+        print('[t/s] %8.2e/%8.2e [dt/s] \033[1m%8.2e\033[0m [S] %8d [P] %5d'
+          % (t_sim, t, dt, n_tsteps, num_it_P) +
+          ' [C] %5d [T] %5d [CFL] %1d' % (num_it_C, num_it_T, CFL))
 
     if config.FLUIDFLOW:
         dt = min(dt_P, t-t_sim)
