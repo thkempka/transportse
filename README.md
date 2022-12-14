@@ -13,12 +13,13 @@ Installation of miniforge or mambaforge environment (for Anaconda please check d
 tse.py: program code (requires custom config file to run)
 
 	Please use this command to run tse.py:
-	[i]python -i [path]tse.py [path]<config file name>
+	[i]python [-i] [-u] [path]tse.py [path]<config file name> [> <log file name>]
 
 	Examples:
-	[i]python -i [path]tse.py config.py
-	[i]python -i [path]tse.py simulation/config.py
-	[i]python -i [path]tse.py ~/tse/simulation/config.py
+	python tse.py config.py
+	python ../../tse.py config.py
+	python tse.py simulation/config.py
+	python tse.py ~/tse/simulation/config.py
 
 tse2pvd.py: program to convert TRANSPORTSE output files to Paraview format (pvd/vts)
 
