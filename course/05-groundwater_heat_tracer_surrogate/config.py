@@ -183,7 +183,7 @@ C[:,:,:,0] = 0                 # Initial concentration
 C[wx,wy,:,0] = 50 * 1e-3       # Concentration at well
 
 # Ca (mol/kgw)
-C[:,:,:,1] = p_anhy(100)       # Initial concentration
+C[:,:,:,1] = 0.02888360        # Initial concentration
 C[wx,wy,:,1] = 0               # Concentration at well
 
 # Anhydrite (mol/m^3)
