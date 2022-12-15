@@ -87,7 +87,7 @@ BC = numpy.zeros((nx, ny, nz))   # species boundary conditions
 BT = numpy.zeros((nx, ny, nz))   # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = numpy.zeros((nx, ny, nz))   # fluid flow (m^3/s)
+WP = numpy.zeros((nx, ny, nz))   # fluid flow (1/s)
 WT = numpy.zeros((nx, ny, nz))   # heat flow  (W/m^3)
 WC = numpy.zeros((nx, ny, nz))   # species flow (kg/m^3/s)
 
@@ -274,7 +274,7 @@ SOR_C = 1.0
 SOR_T = 1.0
 
 ## CONVERGENCE CRITERION FOR L2-NORM ###########################################
-CONV_P = 1e-10
+CONV_P = 1e-12
 CONV_C = 1e-5
 CONV_T = 1e-5
 

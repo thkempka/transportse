@@ -135,7 +135,7 @@ BC = config.BC               # species boundary conditions
 BT = config.BT               # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = config.WP               # fluid flow (kg/s)
+WP = config.WP               # fluid flow (1/s)
 WT = config.WT               # heat flow  (W/m^3)
 WC = config.WC               # species flow (kg/m^3/s)
 

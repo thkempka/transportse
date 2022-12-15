@@ -87,7 +87,7 @@ BC = numpy.zeros((nx, ny, nz))   # species boundary conditions
 BT = numpy.zeros((nx, ny, nz))   # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = numpy.zeros((nx, ny, nz))   # fluid flow (m^3/s)
+WP = numpy.zeros((nx, ny, nz))   # fluid flow (1/s)
 WT = numpy.zeros((nx, ny, nz))   # heat flow  (W/m^3)
 WC = numpy.zeros((nx, ny, nz))   # species flow (kg/m^3/s)
 

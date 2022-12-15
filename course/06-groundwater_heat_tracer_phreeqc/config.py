@@ -87,7 +87,7 @@ BC = numpy.zeros((nx, ny, nz))   # species boundary conditions
 BT = numpy.zeros((nx, ny, nz))   # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = numpy.zeros((nx, ny, nz))   # fluid flow (m^3/s)
+WP = numpy.zeros((nx, ny, nz))   # fluid flow (1/s)
 WT = numpy.zeros((nx, ny, nz))   # heat flow  (W/m^3)
 WC = numpy.zeros((nx, ny, nz))   # species flow (kg/m^3/s)
 
@@ -113,7 +113,7 @@ p_visc = numpy.poly1d(c_visc)
 
 ## CHEMICAL SURROGATE MODEL PARAMETERS #########################################
 # read temperature and dissolved Ca from phreeqc output
-data = numpy.loadtxt('anhydrite_solubility-pitzer.csv', delimiter='\t',
+data = numpy.loadtxt('anhydrite_solubility-phreeqc.csv', delimiter='\t',
         skiprows=2, usecols=(8,9))
 
 # fit polynomial functions using temperature
