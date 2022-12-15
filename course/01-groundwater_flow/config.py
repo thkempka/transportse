@@ -1,5 +1,7 @@
 '''
     TRANSPORTSE configuration file
+
+    Example 1: Groundwater flow - fluid injection into geothermal reservoir
 '''
 
 import os
@@ -87,7 +89,7 @@ BC = numpy.zeros((nx, ny, nz))   # species boundary conditions
 BT = numpy.zeros((nx, ny, nz))   # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = numpy.zeros((nx, ny, nz))   # fluid flow (m^3/s)
+WP = numpy.zeros((nx, ny, nz))   # fluid flow (1/s)
 WT = numpy.zeros((nx, ny, nz))   # heat flow  (W/m^3)
 WC = numpy.zeros((nx, ny, nz))   # species flow (kg/m^3/s)
 
@@ -126,7 +128,7 @@ BP[:,-1,:] = 1       # Top boundary open (Dirichlet-BC)
 WP[wx,wy,:] = 50 / 3600 / dx[wx] / dy[wy] / dz[0]
 
 # INITIAL CONDITIONS ###########################################################
-P[:,:,:] = 1.5e7             # Initial reservoir pressure of
+P[:,:,:] = 1.5e7             # Initial reservoir pressure
 
 # USER FLUID PROPERTY FUNCTION #################################################
 @njit
@@ -174,7 +176,7 @@ OMEGA_C = 1
 OMEGA_T = 1
 
 ## SUCCESSIVE OVER RELAXATION (0 <= SOR <= 2, SOR = 1 -> GAUSS-SEIDEL/JACOBI)
-## SOR < 0: UNDERRELAXATION (SLOWER CONVERGENCE, MAY BE USEFUL FOR TRANSPORT)
+## SOR < 1: UNDERRELAXATION (SLOWER CONVERGENCE, MAY BE USEFUL FOR TRANSPORT)
 ## SOR > 1: OVERRELAXATION (FASTER CONVERGENCE)
 ## OPTIMISED SOR:
 ## SOR_P = 2/(1 + NUMPY.PI/NX) # NX SHOULD BE THE NUMBER OF ACTIVE FLOW ELEMENTS

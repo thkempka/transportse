@@ -184,7 +184,6 @@ def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
         D_f{x,y,z}     diffusion coefficient (m^2/s)
         ...
     '''
-    #rho_fn = rho_f
     rho_f = c_dens[4] + c_dens[3] * T + c_dens[2] * T**2 + c_dens[1] * T**3 + \
             c_dens[0] * T**4
     nue = c_visc[4] + c_visc[3] * T + c_visc[2] * T**2 + c_visc[1] * T**3 + \
@@ -231,7 +230,7 @@ SOR_C = 1.0
 SOR_T = 1.0
 
 ## CONVERGENCE CRITERION FOR L2-NORM ###########################################
-CONV_P = 1e-10
+CONV_P = 1e-12
 CONV_C = 1e-5
 CONV_T = 1e-5
 

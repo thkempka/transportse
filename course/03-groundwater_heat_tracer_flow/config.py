@@ -43,7 +43,7 @@ MASSBALAN = False  # calculate mass balances
 DTCHEM    = 1      # chemical reactions time stepping
 
 ## NUMBER OF SPECIES ###########################################################
-IONS = 1			             # (1) TRACER 
+IONS = 1			             # (0) TRACER
 MINERALS = 1                     # Minerals
                                  #
 SPECIES = IONS + MINERALS        # total number of species
@@ -151,8 +151,8 @@ T[:,:,:] = 100               # Initial reservoir temperature
 T[wx,wy,:] = 20              # Temperature at injection well
 
 # TRACER CONCENTRATION
-C[:,:,:,0] = 0                 # Initial reservoir temperature
-C[wx,wy,:,0] = 100             # Temperature at well
+C[:,:,:,0] = 0                 # Initial reservoir concentration
+C[wx,wy,:,0] = 50e-3           # Concentration at well (50 mmol/kgw)
 
 # USER FLUID PROPERTY FUNCTION #################################################
 @njit
