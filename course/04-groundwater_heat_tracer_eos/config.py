@@ -199,7 +199,6 @@ def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
 if CHEMREACT:
     import phreeqpy.iphreeqc.phreeqc_dll as phreeqc_mod
     if sys.platform == 'linux': # fix phreeqc_dll.py os.platform entry
-        print("Fixing phreeqpy module...")
         os.system('sed -i s/linux2/linux/g '+str(phreeqc_mod).split("'")[3])
 
     phreeqc = phreeqc_mod.IPhreeqc()
