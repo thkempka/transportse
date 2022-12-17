@@ -25,7 +25,6 @@ import sys
 import time
 import numpy
 from joblib import Parallel, delayed, dump
-#from multiprocessing import Pool, cpu_count
 
 # check if config file name is provided
 if len(sys.argv) < 2:
@@ -60,7 +59,8 @@ if parallel_processes < 2:
 else:
     numba_parallel = True
 
-from numba import njit, prange, threading_layer, set_num_threads, get_num_threads
+from numba import njit, prange, threading_layer, set_num_threads
+from numba import get_num_threads
 from numba import config as config_numba
 
 if numba_parallel:
@@ -230,10 +230,6 @@ def l2_norm(New, Old, Process):
         return 1
     else:
         return l2
-
-@njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
-def P_diff(New, Old):
-    return numpy.max(numpy.abs(New-Old))
 
 @njit(fastmath=numba_fastmath,cache=numba_cache,nogil=numba_nogil)
 def amean(i1, j1, k1, i2, j2, k2, X, n):
@@ -1192,10 +1188,17 @@ Pex_T = Pey_T = Pez_T = Pex_C = Pey_C = Pez_C = bc_inc = chem_inc = 0
 
 dt_max_abs = dt_max    # define maximum simulation time
 
-print('\033[1mFLUIDFLOW:\033[0m', config.FLUIDFLOW,
-      '\033[1mSPECTRANS:\033[0m', config.SPECTRANS,
-      '\033[1mHEATRANS\033[0m:', config.HEATTRANS,
-      '\033[1mFLUIDPROP\033[0m:', config.FLUIDPROP)
+print('\033[1mFLUIDFLOW\033[0m:', config.FLUIDFLOW)
+print('\033[1mSPECTRANS\033[0m:', config.SPECTRANS)
+print('\033[1mHEATTRANS\033[0m:', config.HEATTRANS)
+print('\033[1mFLUIDPROP\033[0m:', config.FLUIDPROP)
+print('\033[1mCHEMREACT\033[0m:', config.CHEMREACT)
+print('\033[1mDYNAMICBC\033[0m:', config.DYNAMICBC)
+print('\033[1mMASSBALAN\033[0m:', config.MASSBALAN)
+print('\033[1mNUM_CORES\033[0m:', config.parallel_processes)
+if config.CHEMREACT:
+    print('\033[1mCHEMCORES\033[0m:', config.parallel_chemistry)
+    print('\033[1mDTCHEM   \033[0m:', config.DTCHEM)
 print('lx: %.2f m ly: %.2f m lz: %.2f m\nnx: %d ny: %d nz: %d\n'
       % (lx, ly, lz, nx, ny, nz) + \
       'min dx: %.2f m dy %.2f m dz %.2f m\n' \
@@ -1207,6 +1210,7 @@ print('\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
 print('\033[1mSOR_P:\033[0m', round(config.SOR_P,4),
       '\033[1mSOR_C:\033[0m', round(config.SOR_C,4),
       '\033[1mSOR_T:\033[0m', round(config.SOR_T,4), '\n')
+print('\033[93m+------------------------------------------+\033[0m')
 
 time_start = time.time()
 plotresults()
@@ -1367,12 +1371,11 @@ while t_sim < t:
             chem_inc = 0
         chem_list = index_list(BC)
         if chem_list != [] and chem_inc == 0:
-            #with Pool(config.parallel_chemistry) as p:
-                #results = p.starmap(config.chemical_reactions, chem_list)
             results = Parallel(n_jobs=config.parallel_chemistry)(delayed(
                 config.chemical_reactions)(C[i,j,k], P[i,j,k], T[i,j,k], 
                 rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], Kz[i,j,k]) 
                 for i, j, k in chem_list)
+            # next block may not be required for config.parallel_chemistry = 1
             for num, l in enumerate(chem_list):
                 C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
                 phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
