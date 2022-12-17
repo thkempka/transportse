@@ -24,8 +24,8 @@ os.environ['NUMEXPR_NUM_THREADS']='1'
 import sys
 import time
 import numpy
-import joblib
-from multiprocessing import Pool, cpu_count
+from joblib import Parallel, delayed, dump
+#from multiprocessing import Pool, cpu_count
 
 # check if config file name is provided
 if len(sys.argv) < 2:
@@ -271,7 +271,7 @@ def plotresults():
             elif t_sim == t_plot:
                 with open("{:s}-{:05d}.p".format(cdir+cfile, PLOTINDEX), "wb") \
                     as pfile:
-                    joblib.dump( (lx, ly, lz, nx, ny, nz, dx, dy, dz, t_sim, dt,
+                    dump( (lx, ly, lz, nx, ny, nz, dx, dy, dz, t_sim, dt,
                                   P, C, T, qx, qy, qz, phi, Kx, Ky, Kz, rho_f,
                                   nue, cp_f, l_f, BP, BC, BT, L, mass,
                                   WP, WT), pfile,
@@ -1178,162 +1178,173 @@ def smolarkiewicz(C, qx, qy, qz, vx, vy, vz, dt, eps=1e-15, Sc=1.08):
 
 ################################################################################
 
-if __name__ == '__main__':
+# SOLVER PARAMETERS ########################################################
+t      = config.t      # simulation time (s)
+dt     = config.dt     # initial time step size (s)
+t_sim = 0              # initial simulation time (s)
+n_tsteps = 0           # time step counter (-)
 
-    # SOLVER PARAMETERS ########################################################
-    t      = config.t      # simulation time (s)
-    dt     = config.dt     # initial time step size (s)
-    t_sim = 0              # initial simulation time (s)
-    n_tsteps = 0           # time step counter (-)
+# set counters etc. to zero
+numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = \
+max_Pex_T = max_Pey_T = max_Pez_T = sum_Pex_T = sum_Pey_T = sum_Pez_T = \
+max_Pex_C = max_Pey_C = max_Pez_C = sum_Pex_C = sum_Pey_C = sum_Pez_C = \
+Pex_T = Pey_T = Pez_T = Pex_C = Pey_C = Pez_C = bc_inc = chem_inc = 0
 
-    # set counters etc. to zero
-    numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = \
-    max_Pex_T = max_Pey_T = max_Pez_T = sum_Pex_T = sum_Pey_T = sum_Pez_T = \
-    max_Pex_C = max_Pey_C = max_Pez_C = sum_Pex_C = sum_Pey_C = sum_Pez_C = \
-    Pex_T = Pey_T = Pez_T = Pex_C = Pey_C = Pez_C = bc_inc = chem_inc = 0
+dt_max_abs = dt_max    # define maximum simulation time
 
-    dt_max_abs = dt_max    # define maximum simulation time
+print('\033[1mFLUIDFLOW:\033[0m', config.FLUIDFLOW,
+      '\033[1mSPECTRANS:\033[0m', config.SPECTRANS,
+      '\033[1mHEATRANS\033[0m:', config.HEATTRANS,
+      '\033[1mFLUIDPROP\033[0m:', config.FLUIDPROP)
+print('lx: %.2f m ly: %.2f m lz: %.2f m\nnx: %d ny: %d nz: %d\n'
+      % (lx, ly, lz, nx, ny, nz) + \
+      'min dx: %.2f m dy %.2f m dz %.2f m\n' \
+      % (numpy.min(dx), numpy.min(dy), numpy.min(dz)) + \
+      'max dx: %.2f m dy %.2f m dz %.2f m' \
+      % (numpy.max(dx), numpy.max(dy), numpy.max(dz)))
+print('\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
+      '\033[1mOMEGA_T:\033[0m', config.OMEGA_T)
+print('\033[1mSOR_P:\033[0m', round(config.SOR_P,4),
+      '\033[1mSOR_C:\033[0m', round(config.SOR_C,4),
+      '\033[1mSOR_T:\033[0m', round(config.SOR_T,4), '\n')
 
-    print('\033[1mFLUIDFLOW:\033[0m', config.FLUIDFLOW,
-          '\033[1mSPECTRANS:\033[0m', config.SPECTRANS,
-          '\033[1mHEATRANS\033[0m:', config.HEATTRANS,
-          '\033[1mFLUIDPROP\033[0m:', config.FLUIDPROP)
-    print('lx: %.2f m ly: %.2f m lz: %.2f m\nnx: %d ny: %d nz: %d\n'
-          % (lx, ly, lz, nx, ny, nz) + \
-          'min dx: %.2f m dy %.2f m dz %.2f m\n' \
-          % (numpy.min(dx), numpy.min(dy), numpy.min(dz)) + \
-          'max dx: %.2f m dy %.2f m dz %.2f m' \
-          % (numpy.max(dx), numpy.max(dy), numpy.max(dz)))
-    print('\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
-          '\033[1mOMEGA_T:\033[0m', config.OMEGA_T)
-    print('\033[1mSOR_P:\033[0m', round(config.SOR_P,4),
-          '\033[1mSOR_C:\033[0m', round(config.SOR_C,4),
-          '\033[1mSOR_T:\033[0m', round(config.SOR_T,4), '\n')
+time_start = time.time()
+plotresults()
+while t_sim < t:
+    Co_Filled = False
+    CFL = 0
 
-    time_start = time.time()
-    plotresults()
-    while t_sim < t:
-        Co_Filled = False
-        CFL = 0
+    # Neumann criteria for species and heat transport
+    if config.OMEGA_C == 0:
+        dt_NeC = explicit_C(D_fx, phi)
+        print('dt_NeC',dt_NeC )
 
-        # Neumann criteria for species and heat transport
-        if config.OMEGA_C == 0:
-            dt_NeC = explicit_C(D_fx, phi)
-            print('dt_NeC',dt_NeC )
+    if config.OMEGA_T == 0:
+        alphamax = numpy.max((phi * l_f + (1 - phi) * l_r) /
+                (phi * rho_f * cp_f + (1 - phi) * rho_r * cp_r))
+        dt_NeT = 0.45 / alphamax / (1 / dx**2 + 1 / dy**2 + 1 / dz**2)
 
-        if config.OMEGA_T == 0:
-            alphamax = numpy.max((phi * l_f + (1 - phi) * l_r) /
-                    (phi * rho_f * cp_f + (1 - phi) * rho_r * cp_r))
-            dt_NeT = 0.45 / alphamax / (1 / dx**2 + 1 / dy**2 + 1 / dz**2)
+    num_it_P = 0
+    if config.FLUIDFLOW:
+        while not Co_Filled:
+            dt, dt_P, P, Pn, converged_P, num_it_P = compute_P(P, c_f,
+                nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
+                max_dt=dt_max, inc_it=1.25, SOR=config.SOR_P,
+                max_it=20000, P_conv=config.CONV_P)
 
-        num_it_P = 0
-        if config.FLUIDFLOW:
-            while not Co_Filled:
-                dt, dt_P, P, Pn, converged_P, num_it_P = compute_P(P, c_f,
-                    nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
-                    max_dt=dt_max, inc_it=1.25, SOR=config.SOR_P,
-                    max_it=20000, P_conv=config.CONV_P)
+            if not converged_P:
+                sys.exit('* P CONVERGENCE ERROR ' +
+                         '- check dt and p_conv in compute_p')
 
-                if not converged_P:
-                    sys.exit('* P CONVERGENCE ERROR ' +
-                             '- check dt and p_conv in compute_p')
+            if t_sim == 0 and numba_parallel:
+                print('Threading layer:', threading_layer(), \
+                      'Threads:', get_num_threads(), '\n')
 
-                if t_sim == 0 and numba_parallel:
-                    print('Threading layer:', threading_layer(), \
-                          'Threads:', get_num_threads(), '\n')
+            qx, qy, qz  = compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
 
-                qx, qy, qz  = compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
+            # Check CFL and Neumann criteria to adapt maximum time step as
+            # required
+            if t_sim > 0:
+                dt_CFL = 0.9/(numpy.max(numpy.reshape(numpy.abs(qx)/phi, \
+                            (ny,nz,nx)) /dx) + \
+                            numpy.max(numpy.reshape(numpy.abs(qy)/phi, \
+                            (nx,nz,ny)) / dy) + \
+                            numpy.max(numpy.abs(qz)/phi/dz))
+            else:
+                dt_CFL = 1e10
 
-                # Check CFL and Neumann criteria to adapt maximum time step as
-                # required
-                if t_sim > 0:
-                    dt_CFL = 0.9/(numpy.max(numpy.reshape(numpy.abs(qx)/phi, \
-                                (ny,nz,nx)) /dx) + \
-                                numpy.max(numpy.reshape(numpy.abs(qy)/phi, \
-                                (nx,nz,ny)) / dy) + \
-                                numpy.max(numpy.abs(qz)/phi/dz))
-                else:
-                    dt_CFL = 1e10
+            dt_max_C = dt_max_T = dt_max_P = dt_max_abs
 
-                dt_max_C = dt_max_T = dt_max_P = dt_max_abs
+            # calculate Peclet numbers for heat and species transport
+            if config.HEATTRANS:
+                Pex_T, Pey_T, Pez_T = peclet_T(PeC, qx, qy, qz, rho_f, cp_f,
+                        phi, l_r, l_f)
 
-                # calculate Peclet numbers for heat and species transport
-                if config.HEATTRANS:
-                    Pex_T, Pey_T, Pez_T = peclet_T(PeC, qx, qy, qz, rho_f, cp_f,
-                            phi, l_r, l_f)
+            if config.SPECTRANS:
+                Pex_C, Pey_C, Pez_C =  peclet_C(PeT, qx, qy, qz, D_fx)
 
-                if config.SPECTRANS:
-                    Pex_C, Pey_C, Pez_C =  peclet_C(PeT, qx, qy, qz, D_fx)
+            # Set Neumann criteria for explicit method
+            if config.OMEGA_C == 0:
+                dt_max_C = dt_NeC
+            if config.OMEGA_T == 0:
+                dt_max_T = dt_NeT
 
-                # Set Neumann criteria for explicit method
-                if config.OMEGA_C == 0:
-                    dt_max_C = dt_NeC
-                if config.OMEGA_T == 0:
-                    dt_max_T = dt_NeT
+            dt_max = min(dt_CFL, dt_max_C, dt_max_T, dt_max_P)
 
-                dt_max = min(dt_CFL, dt_max_C, dt_max_T, dt_max_P)
+            # print time step and convergence control data
+            if n_tsteps % config.PRINTOUT == 0:
+                if config.OMEGA_C + config.OMEGA_T < 2:
+                    print(' [dt_NeC] %8.2e [dt_NeT] %8.2e' %
+                          ( dt_max_C, dt_max_T) )
 
-                # print time step and convergence control data
-                if n_tsteps % config.PRINTOUT == 0:
-                    if config.OMEGA_C + config.OMEGA_T < 2:
-                        print(' [dt_NeC] %8.2e [dt_NeT] %8.2e' %
-                              ( dt_max_C, dt_max_T) )
+                print(' [%%CFL] %6.2f [PTx] %6.4f [PTy] %6.4f [PTz] %6.4f'
+                      % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T) +
+                      ' [PCx] %6.4f [PCy] %6.4f [PCz] %6.4f' %
+                      (Pex_C, Pey_C, Pez_C))
+                print(' [P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f'
+                      % (numpy.max(P), numpy.min(P), numpy.max(T),
+                          numpy.min(T)) +
+                      ' [C+] %6.4f [C-] %6.4f' % (numpy.max(C), numpy.min(C)))
 
-                    print(' [%%CFL] %6.2f [PTx] %6.4f [PTy] %6.4f [PTz] %6.4f'
-                          % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T) +
-                          ' [PCx] %6.4f [PCy] %6.4f [PCz] %6.4f' % (Pex_C, 
-                                                                    Pey_C,
-                                                                    Pez_C))
-                    print(' [P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f'
-                          % (numpy.max(P), numpy.min(P), numpy.max(T), 
-                              numpy.min(T)) +
-                          ' [C+] %6.4f [C-] %6.4f' % (numpy.max(C), 
-                              numpy.min(C)))
+            Co_Filled = True
+            if dt > dt_max*1.0:
+                numitP += num_it_P # count also CFL correction iterations
+                num_CFL += num_it_P
+                CFL += 1
+                dt = dt_max #/2 # reduce dt to match Co-Kriterium
+                #P = Pn.copy() # reset P to previous time step
 
-                Co_Filled = True
-                if dt > dt_max*1.0:
-                    numitP += num_it_P # count also CFL correction iterations
-                    num_CFL += num_it_P
-                    CFL += 1
-                    dt = dt_max #/2 # reduce dt to match Co-Kriterium
-                    #P = Pn.copy() # reset P to previous time step
+    num_it_C = 0
 
-        num_it_C = 0
+    if config.SPECTRANS:
+        for n in config.SPTRANS: # repeat for all transported species
+            # compute only if at least one C != 0 and WC != 0
+            if numpy.sum(C[:,:,:,n]) != 0.0 or numpy.sum(WC[:,:,:]) != 0.0:
+                dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
+                    C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz,
+                    dt, BC, WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
+                    C_conv=config.CONV_C, upwind=1)
 
-        if config.SPECTRANS:
-            for n in config.SPTRANS: # repeat for all transported species
-                # compute only if at least one C != 0 and WC != 0
-                if numpy.sum(C[:,:,:,n]) != 0.0 or numpy.sum(WC[:,:,:]) != 0.0:
+                num_it_C += num_itC
+
+                if not converged_C:
+                    sys.exit('* C CONVERGENCE ERROR' +
+                            '- check dt and C_conv in compute_C', n)
+
+                if config.SMOLAR_C:
+                    vx, vy, vz = smolarkiewicz(C[:,:,:,n], qx, qy, qz,
+                                       vx, vy, vz, dt, eps=1e-15, Sc=1.08)
+
                     dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                        C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, 
-                        dt, BC, WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
-                        C_conv=config.CONV_C, upwind=1)
+                        C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, vx, vy,
+                        vz, dt, BC, WC, R, omega=config.OMEGA_C,
+                        SOR=config.SOR_C, C_conv=config.CONV_C)
 
                     num_it_C += num_itC
 
                     if not converged_C:
-                        sys.exit('* C CONVERGENCE ERROR' +
-                                '- check dt and C_conv in compute_C', n)
+                        sys.exit('* C2 CONVERGENCE ERROR'+
+                            '- check dt and C_conv in compute_C', n)
 
-                    if config.SMOLAR_C:
-                        vx, vy, vz = smolarkiewicz(C[:,:,:,n], qx, qy, qz,
-                                           vx, vy, vz, dt, eps=1e-15, Sc=1.08)
+    num_it_T = 0
+    if config.HEATTRANS:
+        dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f, cp_f,
+                rho_f, phi, qx, qy, qz, dt, BT, WT,
+                omega=config.OMEGA_T, SOR=config.SOR_T,
+                T_conv=config.CONV_T)
 
-                        dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                            C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, vx, vy, 
-                            vz, dt, BC, WC, R, omega=config.OMEGA_C, 
-                            SOR=config.SOR_C, C_conv=config.CONV_C)
+        num_it_T += num_itT
 
-                        num_it_C += num_itC
+        if not converged_T:
+            sys.exit('* T CONVERGENCE ERROR' +
+                     ' - check dt and T_conv in compute_T')
 
-                        if not converged_C:
-                            sys.exit('* C2 CONVERGENCE ERROR'+
-                                '- check dt and C_conv in compute_C', n)
+        if config.SMOLAR_T:
+            vx, vy, vz  = smolarkiewicz(T, qx, qy, qz, vx, vy, vz, dt,
+                                        eps=1e-15, Sc=1.08)
 
-        num_it_T = 0
-        if config.HEATTRANS:
-            dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f, cp_f,
-                    rho_f, phi, qx, qy, qz, dt, BT, WT,
+            dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f,
+                    cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
                     omega=config.OMEGA_T, SOR=config.SOR_T,
                     T_conv=config.CONV_T)
 
@@ -1343,109 +1354,97 @@ if __name__ == '__main__':
                 sys.exit('* T CONVERGENCE ERROR' +
                          ' - check dt and T_conv in compute_T')
 
-            if config.SMOLAR_T:
-                vx, vy, vz  = smolarkiewicz(T, qx, qy, qz, vx, vy, vz, dt,
-                                            eps=1e-15, Sc=1.08)
+    # calculate chemical reactions
+    if config.CHEMREACT:
+        if t_sim > 0:
+            chem_inc += dt
+        else:
+            chem_inc = 0
+            config.dt_chem = dt
 
-                dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f,
-                        cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
-                        omega=config.OMEGA_T, SOR=config.SOR_T,
-                        T_conv=config.CONV_T)
+        if chem_inc >= config.DTCHEM:
+            config.dt_chem = chem_inc
+            chem_inc = 0
+        chem_list = index_list(BC)
+        if chem_list != [] and chem_inc == 0:
+            #with Pool(config.parallel_chemistry) as p:
+                #results = p.starmap(config.chemical_reactions, chem_list)
+            Parallel(n_jobs=config.parallel_chemistry,
+                require='sharedmem')(delayed(
+                config.chemical_reactions)(x,y,z) for x, y, z in chem_list)
+            #for num, l in enumerate(chem_list):
+                #C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
+                #phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
+                #Ky[l[0],l[1],l[2]], Kz[l[0],l[1],l[2]] = \
+                        #results[num][0], results[num][1], \
+                        #results[num][2], results[num][3], \
+                        #results[num][4], results[num][5]
 
-                num_it_T += num_itT
+    # dynamic boundary conditions
+    if config.DYNAMICBC:
+        bc_inc, P, T, C, BP, BT, BC, WP, WT, WC = \
+            config.dynamic_bc(t_sim+dt, bc_inc, P, T, C, BP, BT, BC, WP, WT,
+                    WC)
 
-                if not converged_T:
-                    sys.exit('* T CONVERGENCE ERROR' +
-                             ' - check dt and T_conv in compute_T')
+    # calculate mass balances
+    if config.MASSBALAN:
+        mass = config.mass_balance(C, qx, qy, qz, dt, mass)
 
-        # calculate chemical reactions
-        if config.CHEMREACT:
-            if t_sim > 0:
-                chem_inc += dt
-            else:
-                chem_inc = 0
-                config.dt_chem = dt
+    # calculate fluid properties
+    if config.FLUIDPROP:
+        C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, \
+            Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r = \
+            run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r,
+                    l_r, phi, Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r)
 
-            if chem_inc >= config.DTCHEM:
-                config.dt_chem = chem_inc
-                chem_inc = 0
-            chem_list = index_list(BC)
-            if chem_list != [] and chem_inc == 0:
-                with Pool(config.parallel_chemistry) as p:
-                    results = p.starmap(config.chemical_reactions, chem_list)
-                for num, l in enumerate(chem_list):
-                    C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
-                    phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
-                    Ky[l[0],l[1],l[2]], Kz[l[0],l[1],l[2]] = \
-                            results[num][0], results[num][1], \
-                            results[num][2], results[num][3], \
-                            results[num][4], results[num][5]
+    t_sim += dt
+    n_tsteps += 1
+    numitP += num_it_P
+    numitC += num_it_C
+    numitT += num_it_T
+    max_Pex_T = max(Pex_T, max_Pex_T)
+    max_Pey_T = max(Pey_T, max_Pey_T)
+    max_Pez_T = max(Pez_T, max_Pez_T)
+    sum_Pex_T += Pex_T
+    sum_Pey_T += Pey_T
+    sum_Pez_T += Pez_T
+    max_Pex_C = max(Pex_C, max_Pex_C)
+    max_Pey_C = max(Pey_C, max_Pey_C)
+    max_Pez_C = max(Pez_C, max_Pez_C)
+    sum_Pex_C += Pex_C
+    sum_Pey_C += Pey_C
+    sum_Pez_C += Pez_C
+    max_DT = max(max_DT, dt)
 
-        # dynamic boundary conditions
-        if config.DYNAMICBC:
-            bc_inc, P, T, C, BP, BT, BC, WP, WT, WC = \
-                config.dynamic_bc(t_sim+dt, bc_inc, P, T, C, BP, BT, BC, WP, WT,
-                        WC)
+    if n_tsteps % config.PRINTOUT == 0:
+        print('[t/s] %8.2e/%8.2e [dt/s] \033[1m%8.2e\033[0m [S] %8d [P] %5d'
+          % (t_sim, t, dt, n_tsteps, num_it_P) +
+          ' [C] %5d [T] %5d [CFL] %1d' % (num_it_C, num_it_T, CFL))
 
-        # calculate mass balances
-        if config.MASSBALAN:
-            mass = config.mass_balance(C, qx, qy, qz, dt, mass)
+    if config.FLUIDFLOW:
+        dt = min(dt_P, t-t_sim)
+    elif config.HEATTRANS:
+        dt = min(dt_T, t-t_sim)
+    elif config.SPECTRANS:
+        dt = min(dt_C, t-t_sim)
 
-        # calculate fluid properties
-        if config.FLUIDPROP:
-            C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi, \
-                Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r = \
-                run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, 
-                        l_r, phi, Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r)
+    plotresults()
 
-        t_sim += dt
-        n_tsteps += 1
-        numitP += num_it_P
-        numitC += num_it_C
-        numitT += num_it_T
-        max_Pex_T = max(Pex_T, max_Pex_T)
-        max_Pey_T = max(Pey_T, max_Pey_T)
-        max_Pez_T = max(Pez_T, max_Pez_T)
-        sum_Pex_T += Pex_T
-        sum_Pey_T += Pey_T
-        sum_Pez_T += Pez_T
-        max_Pex_C = max(Pex_C, max_Pex_C)
-        max_Pey_C = max(Pey_C, max_Pey_C)
-        max_Pez_C = max(Pez_C, max_Pez_C)
-        sum_Pex_C += Pex_C
-        sum_Pey_C += Pey_C
-        sum_Pez_C += Pez_C
-        max_DT = max(max_DT, dt)
+# PRINT FINAL SIMULATION STATS #############################################
+print('[ SIMULATION SUMMARY ]')
+print('[t/s] %8.2e/%8.2e [S] %5d [P] %5d [C] %5d [T] %5d [CFL] %1d'
+      % (t_sim, t, n_tsteps, numitP, numitC, numitT, num_CFL))
+print('[max dt] %8.2e [max PTx] %8.4e [max PTy] %8.4e [max PTz] %8.4e'
+      % (max_DT, max_Pex_T, max_Pey_T, max_Pez_T))
+print('[avg dt] %8.2e [avg PTx] %8.4e [avg PTy] %8.4e [avg PTz] %8.4e'
+      % (t_sim/n_tsteps, sum_Pex_T/n_tsteps, sum_Pey_T/n_tsteps,
+         sum_Pez_T/n_tsteps))
+print('[max dt] %8.2e [max PCx] %8.4e [max PCy] %8.4e [max PCz] %8.4e'
+      % (max_DT, max_Pex_C, max_Pey_C, max_Pez_C))
+print('[avg dt] %8.2e [avg PCx] %8.4e [avg PCy] %8.4e [avg PCz] %8.4e'
+      % (t_sim/n_tsteps, sum_Pex_C/n_tsteps, sum_Pey_C/n_tsteps,
+         sum_Pez_C/n_tsteps))
 
-        if n_tsteps % config.PRINTOUT == 0:
-            print('[t/s] %8.2e/%8.2e [dt/s] \033[1m%8.2e\033[0m [S] %8d [P] %5d'
-              % (t_sim, t, dt, n_tsteps, num_it_P) +
-              ' [C] %5d [T] %5d [CFL] %1d' % (num_it_C, num_it_T, CFL))
-
-        if config.FLUIDFLOW:
-            dt = min(dt_P, t-t_sim)
-        elif config.HEATTRANS:
-            dt = min(dt_T, t-t_sim)
-        elif config.SPECTRANS:
-            dt = min(dt_C, t-t_sim)
-
-        plotresults()
-
-    # PRINT FINAL SIMULATION STATS #############################################
-    print('[ SIMULATION SUMMARY ]')
-    print('[t/s] %8.2e/%8.2e [S] %5d [P] %5d [C] %5d [T] %5d [CFL] %1d'
-          % (t_sim, t, n_tsteps, numitP, numitC, numitT, num_CFL))
-    print('[max dt] %8.2e [max PTx] %8.4e [max PTy] %8.4e [max PTz] %8.4e'
-          % (max_DT, max_Pex_T, max_Pey_T, max_Pez_T))
-    print('[avg dt] %8.2e [avg PTx] %8.4e [avg PTy] %8.4e [avg PTz] %8.4e'
-          % (t_sim/n_tsteps, sum_Pex_T/n_tsteps, sum_Pey_T/n_tsteps,
-             sum_Pez_T/n_tsteps))
-    print('[max dt] %8.2e [max PCx] %8.4e [max PCy] %8.4e [max PCz] %8.4e'
-          % (max_DT, max_Pex_C, max_Pey_C, max_Pez_C))
-    print('[avg dt] %8.2e [avg PCx] %8.4e [avg PCy] %8.4e [avg PCz] %8.4e'
-          % (t_sim/n_tsteps, sum_Pex_C/n_tsteps, sum_Pey_C/n_tsteps,
-             sum_Pez_C/n_tsteps))
-
-    time_total = time.time()-time_start
-    print('[Run time]', round(time_total, 2), '(s)', round(time_total/3600, 2),
-         '(hours)')
+time_total = time.time()-time_start
+print('[Run time]', round(time_total, 2), '(s)', round(time_total/3600, 2),
+     '(hours)')
