@@ -1369,16 +1369,17 @@ while t_sim < t:
         if chem_list != [] and chem_inc == 0:
             #with Pool(config.parallel_chemistry) as p:
                 #results = p.starmap(config.chemical_reactions, chem_list)
-            Parallel(n_jobs=config.parallel_chemistry,
-                require='sharedmem')(delayed(
-                config.chemical_reactions)(x,y,z) for x, y, z in chem_list)
-            #for num, l in enumerate(chem_list):
-                #C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
-                #phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
-                #Ky[l[0],l[1],l[2]], Kz[l[0],l[1],l[2]] = \
-                        #results[num][0], results[num][1], \
-                        #results[num][2], results[num][3], \
-                        #results[num][4], results[num][5]
+            results = Parallel(n_jobs=config.parallel_chemistry)(delayed(
+                config.chemical_reactions)(C[i,j,k], P[i,j,k], T[i,j,k], 
+                rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], Kz[i,j,k]) 
+                for i, j, k in chem_list)
+            for num, l in enumerate(chem_list):
+                C[l[0],l[1],l[2]], rho_f[l[0],l[1],l[2]], \
+                phi[l[0],l[1],l[2]], Kx[l[0],l[1],l[2]], \
+                Ky[l[0],l[1],l[2]], Kz[l[0],l[1],l[2]] = \
+                        results[num][0], results[num][1], \
+                        results[num][2], results[num][3], \
+                        results[num][4], results[num][5]
 
     # dynamic boundary conditions
     if config.DYNAMICBC:
