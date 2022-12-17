@@ -13,7 +13,7 @@ Installation of miniforge or mambaforge environment (for Anaconda please check d
 tse.py: program code (requires custom config file to run)
 
 	Please use this command to run tse.py:
-	[i]python [-i] [-u] [path]tse.py [path]<config file name> [> <log file name>]
+	[i]python [-i] [-u] [path]tse.py [path]<config file name> [2>&1 | tee <log file name>]
 
 	Examples:
 	python tse.py config.py

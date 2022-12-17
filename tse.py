@@ -29,9 +29,10 @@ from joblib import Parallel, delayed, dump
 # check if config file name is provided
 if len(sys.argv) < 2:
     print('\n\tPlease use this command to run TRANSPORTSE:\n' + \
-         '\033[1m\tpython -i [path]tse.py [path]<config file name>\033[0m' + \
+         '\033[1m\tpython [-i] [-u] [path]tse.py [path]<config file name>' + \
+         '[2>&1 | tee [path]<log file name>]\033[0m' + \
          '\n\n\t\033[1mExamples:\033[0m' + \
-         '\n\tpython -i tse.py config.py' + \
+         '\n\tpython -u tse.py config.py 2>&1 | tee config.log' + \
          '\n\tpython -i tse.py simulation/config.py' + \
          '\n\tpython -i tse.py ~/tse/simulation/config.py\n'
             )
