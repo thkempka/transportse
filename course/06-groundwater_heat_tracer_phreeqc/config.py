@@ -223,13 +223,12 @@ def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
 if CHEMREACT:
     import phreeqpy.iphreeqc.phreeqc_dll as phreeqc_mod
     if sys.platform == 'linux': # fix phreeqc_dll.py os.platform entry
-        print("Fixing phreeqpy module...")
         os.system('sed -i s/linux2/linux/g '+str(phreeqc_mod).split("'")[3])
 
     phreeqc = phreeqc_mod.IPhreeqc()
     phreeqc.load_database(r"phreeqc.dat")
 
-def chemical_reactions(i,j,k):
+def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz):
 
     input_string = """
     SELECTED_OUTPUT 1
@@ -247,20 +246,20 @@ def chemical_reactions(i,j,k):
 
     SOLUTION 1
     	units     mol/kgw 
-        #press     """+ str(P[i,j,k] / 101325) +"""
+        #press     """+ str(P / 101325) +"""
         press     """+ str(1.5e7 / 101325) +"""
-    	temp      """+ str(T[i,j,k]) +"""
-        #density   """+ str(rho_f[i,j,k] * 1e-3) +"""
-        pH        """+ str(C[i,j,k,3]) +""" charge
-    	Ca        """+ str(C[i,j,k,1]) +"""
-    	S         """+ str(C[i,j,k,1]) +"""
+    	temp      """+ str(T) +"""
+        #density   """+ str(rho_f * 1e-3) +"""
+        pH        """+ str(C[3]) +""" charge
+    	Ca        """+ str(C[1]) +"""
+    	S         """+ str(C[1]) +"""
         Na        1.7
         Cl        1.7
         water     1 # kg
 
     EQUILIBRIUM_PHASES 1
         # convert from mol/m^3 to mol/kgw
-        Anhydrite   0   """+ str(C[i,j,k,2] / rho_f[i,j,k] / phi[i,j,k]) +"""   
+        Anhydrite   0   """+ str(C[2] / rho_f / phi) +"""   
 
     END"""
     
@@ -280,18 +279,16 @@ def chemical_reactions(i,j,k):
         # (7) 'd_Anhydrite', (8) 'Density_(kg/m^3)'
 
         # IONS (indices need to be adapted to amount of ions and minerals)
-        C[i,j,k,1] = pout[2] 
+        C[1] = pout[2] 
         # MINERALS: back conversion from mol/kgw to mol/m^3
-        C[i,j,k,2] = pout[6] * rho_f[i,j,k] * phi[i,j,k] 
+        C[2] = pout[6] * rho_f * phi 
 
-        return C[i,j,k], rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], \
-                Kz[i,j,k]
+        return C, rho_f, phi, Kx, Ky, Kz
             
     except:
         print('phreeqc error')
 
-        return C[i,j,k], rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], \
-                Kz[i,j,k]
+        return C, rho_f, phi, Kx, Ky, Kz
 
 #===============================================================================
 
