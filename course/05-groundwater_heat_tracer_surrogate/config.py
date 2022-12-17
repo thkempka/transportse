@@ -222,36 +222,35 @@ def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
 if CHEMREACT:
     import phreeqpy.iphreeqc.phreeqc_dll as phreeqc_mod
     if sys.platform == 'linux': # fix phreeqc_dll.py os.platform entry
-        print("Fixing phreeqpy module...")
         os.system('sed -i s/linux2/linux/g '+str(phreeqc_mod).split("'")[3])
 
     phreeqc = phreeqc_mod.IPhreeqc()
     phreeqc.load_database(r"phreeqc.dat")
 
-def chemical_reactions(i,j,k):
+def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz):
 
     # calculate temperature-dependent solubility
-    sol = c_anhy[4] + c_anhy[3] * T[i,j,k] + c_anhy[2] * T[i,j,k]**2 + \
-            c_anhy[1] * T[i,j,k]**3 + c_anhy[0] * T[i,j,k]**4
+    sol = c_anhy[4] + c_anhy[3] * T + c_anhy[2] * T**2 + \
+            c_anhy[1] * T**3 + c_anhy[0] * T**4
 
     ############################################################################
     # dissolution, precipitation or no reaction depending on molality
     #
     # calculate maximum mineral phase changes based on Ca molality
-    d_anhy = (C[i,j,k,1] - sol) * rho_f[i,j,k] * phi[i,j,k]
+    d_anhy = (C[1] - sol) * rho_f * phi
 
     if d_anhy < 0: # dissolution
-        if C[i,j,k,2] > abs(d_anhy):
-            C[i,j,k,2] += d_anhy 
-            C[i,j,k,1] = sol                          
+        if C[2] > abs(d_anhy):
+            C[2] += d_anhy 
+            C[1] = sol                          
         else: # complete dissolution
-            C[i,j,k,1] += C[i,j,k,2] / rho_f[i,j,k] / phi[i,j,k] 
-            C[i,j,k,2] = 0
+            C[1] += C[2] / rho_f / phi 
+            C[2] = 0
     else: # precipitation
-        C[i,j,k,2] += d_anhy
-        C[i,j,k,1] = sol                          
+        C[2] += d_anhy
+        C[1] = sol                          
 
-    return C[i,j,k], rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], Kz[i,j,k]
+    return C, rho_f, phi, Kx, Ky, Kz
 
 #===============================================================================
 
