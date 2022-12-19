@@ -13,6 +13,8 @@
 
 # IMPORT LIBRARIES AND CONFIG FILE #############################################
 import os
+
+# avoid over-subscription of CPU resources
 os.environ['NUMBA_THREADING_LAYER']='tbb'
 os.environ['OMP_NUM_THREADS']='1'
 os.environ['MKL_NUM_THREADS']='1'

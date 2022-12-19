@@ -227,6 +227,7 @@ if CHEMREACT:
     phreeqc = phreeqc_mod.IPhreeqc()
     phreeqc.load_database(r"phreeqc.dat")
 
+@njit
 def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz):
 
     # calculate temperature-dependent solubility

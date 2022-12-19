@@ -5,7 +5,6 @@
 import os
 import sys
 import numpy
-import joblib
 from numba import njit
 
 # PARALLELISATION AND TUNING ###################################################
@@ -195,6 +194,7 @@ C[:,:,:,3] = 7
 
 
 # USER FLUID PROPERTY FUNCTION #################################################
+
 @njit
 def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
                      Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r):
