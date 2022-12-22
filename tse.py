@@ -261,11 +261,12 @@ def harm(i1, j1, k1, i2, j2, k2, H, n):
 
 def plotresults():
     # write results into pickle file at selected time steps
-    global PLOTINDEX, dt
+    global PLOTINDEX, dt, dt_prev
     if config.PLOTSAVE:
         if PLOTINDEX <= numpy.shape(config.PLOTTIME)[0] - 1:
             t_plot = config.PLOTTIME[PLOTINDEX]
             if t_sim < t_plot:
+                dt_prev = dt
                 dt = min(dt, t_plot-t_sim)
             elif t_sim == t_plot:
                 with open("{:s}-{:05d}.p".format(cdir+cfile, PLOTINDEX), "wb") \
@@ -275,6 +276,7 @@ def plotresults():
                                   nue, cp_f, l_f, BP, BC, BT, L, mass,
                                   WP, WT), pfile,
                                   compress=3)
+                dt = dt_prev
                 PLOTINDEX += 1
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
@@ -443,29 +445,38 @@ def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache, \
       nogil=numba_nogil)
-def compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
+def compute_q(P, BP, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
     for k in prange(nz): # iteration only for interfaces between grid points
         for j in prange(ny):
             for i in prange(nx):
                 if i < nx - 1:
-                    qx[i, j, k] = (- harm(i+1, j, k, i, j, k, Kx, 0) /
+                    if not (BP[i,j,k] and BP[i+1,j,k]):
+                        qx[i, j, k] = (- harm(i+1, j, k, i, j, k, Kx, 0) /
                                 harm(i+1, j, k,  i, j, k, nue, 0)
                                 * ((P[i+1, j, k] -P[i, j, k]) /
                                   (0.5 * (dx[i+1] + dx[i]))
                                 + amean(i+1, j, k, i, j, k, rho_f, 0) * g *
                                 numpy.sin(beta)))
+                    else:
+                        qx[i,j,k] = 0
                 if j < ny - 1:
-                    qy[i, j, k] = (- harm(i, j+1, k, i, j, k, Ky, 1) /
+                    if not (BP[i,j,k] and BP[i,j+1,k]):
+                        qy[i, j, k] = (- harm(i, j+1, k, i, j, k, Ky, 1) /
                                 harm(i, j+1, k, i, j, k, nue, 1)
                                 * (P[i, j+1, k] - P[i, j, k]) /
                                   (0.5 * (dy[j+1] + dy[j])))
+                    else:
+                        qy[i,j,k] = 0
                 if k < nz - 1:
-                    qz[i, j, k] = (- harm(i, j, k+1, i, j, k, Kz, 2) /
+                    if not (BP[i,j,k] and BP[i,j,k+1]):
+                        qz[i, j, k] = (- harm(i, j, k+1, i, j, k, Kz, 2) /
                                 harm(i, j, k+1, i, j, k, nue, 2)
                                 * ((P[i, j, k+1]-P[i, j, k]) /
                                   (0.5 * (dz[k+1] + dz[k]))
                                 + amean(i, j, k+1, i, j, k, rho_f, 2) * g *
                                 numpy.cos(beta)))
+                    else:
+                        qz[i,j,k] = 0
     return qx, qy, qz
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,
@@ -668,7 +679,7 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
             ph = amean(i+1, j, k, i, j, k, phi, 0)
             re = harm(i+1, j, k, i, j, k, RC, 0)
-            A_ = (harm(i+1, j, k, i, j, k, D_fx, 0) * ph + D_xr ) / dd2 / re
+            A_ = (harm(i+1, j, k, i, j, k, D_fx, 0) * ph + D_xr) / dd2 / re
             G_ = max(qx[i,j,k], 0) / dd / re
             H_ = min(qx[i,j,k], 0) / dd / re
             if upwind == 0:
@@ -681,7 +692,7 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
             ph = amean(i-1, j, k, i, j, k, phi, 0)
             re = harm(i-1, j, k, i, j, k, RC, 0)
-            B_ = (harm(i-1, j, k, i, j, k, D_fx, 0) * ph + D_xl ) / dd2 / re
+            B_ = (harm(i-1, j, k, i, j, k, D_fx, 0) * ph + D_xl) / dd2 / re
             I_ = max(qx[i-1,j,k], 0) / dd / re
             J_ = min(qx[i-1,j,k], 0) / dd / re
             if upwind == 0:
@@ -694,7 +705,7 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
             ph = amean(i, j+1, k, i, j, k, phi, 1)
             re = harm(i, j+1, k, i, j, k, RC, 1)
-            C_ = (harm(i, j+1, k, i, j, k, D_fy, 1) * ph + D_yr ) / dd2 / re
+            C_ = (harm(i, j+1, k, i, j, k, D_fy, 1) * ph + D_yr) / dd2 / re
             K_ = max(qy[i,j,k], 0) / dd / re
             L_ = min(qy[i,j,k], 0) / dd / re
             if upwind == 0:
@@ -707,7 +718,7 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
             ph = amean(i, j-1, k, i, j, k, phi, 1)
             re = harm(i, j-1, k, i, j, k, RC, 1)
-            D_ = (harm(i, j-1, k, i, j, k, D_fy, 1) * ph + D_yl ) / dd2 / re
+            D_ = (harm(i, j-1, k, i, j, k, D_fy, 1) * ph + D_yl) / dd2 / re
             M_ = max(qy[i,j-1,k], 0) / dd / re
             N_ = min(qy[i,j-1,k], 0) / dd / re
             if upwind == 0:
@@ -720,7 +731,7 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
             ph = amean(i, j, k+1, i, j, k, phi, 2)
             re = harm(i, j, k+1, i, j, k, RC, 2)
-            E_ = (harm(i, j, k+1, i, j, k, D_fz, 2) * ph + D_zr ) / dd2 / re
+            E_ = (harm(i, j, k+1, i, j, k, D_fz, 2) * ph + D_zr) / dd2 / re
             O_ = max(qz[i,j,k], 0) / dd / re
             P_ = min(qz[i,j,k], 0) / dd / re
             if upwind == 0:
@@ -733,7 +744,7 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
             ph = amean(i, j, k-1, i, j, k, phi, 2)
             re = harm(i, j, k-1, i, j, k, RC, 2)
-            F_ = (harm(i, j, k-1, i, j, k, D_fz, 2) * ph + D_zl ) / dd2 / re
+            F_ = (harm(i, j, k-1, i, j, k, D_fz, 2) * ph + D_zl) / dd2 / re
             Q_ = max(qz[i,j,k-1], 0) / dd / re
             R_ = min(qz[i,j,k-1], 0) / dd / re
             if upwind == 0:
@@ -1180,6 +1191,7 @@ def smolarkiewicz(C, qx, qy, qz, vx, vy, vz, dt, eps=1e-15, Sc=1.08):
 # SOLVER PARAMETERS ########################################################
 t      = config.t      # simulation time (s)
 dt     = config.dt     # initial time step size (s)
+dt_prev = dt           # plotresults dt initialisation
 t_sim = 0              # initial simulation time (s)
 n_tsteps = 0           # time step counter (-)
 
@@ -1247,7 +1259,7 @@ while t_sim < t:
                 print('Threading layer:', threading_layer(), \
                       'Threads:', get_num_threads(), '\n')
 
-            qx, qy, qz  = compute_q(P, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
+            qx, qy, qz  = compute_q(P, BP, Kx, Ky, Kz, qx, qy, qz, nue, rho_f)
 
             # Check CFL and Neumann criteria to adapt maximum time step as
             # required
