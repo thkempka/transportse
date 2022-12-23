@@ -8,10 +8,10 @@ dependencies:
   - mkl
   - numba
   - numpy
-  - phreeqpy
   - pip
   - pyevtk
   - scipy
   - pip:
+    - phreeqpy
     - icc-rt
     - intel-openmp
