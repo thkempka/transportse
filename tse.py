@@ -322,13 +322,12 @@ def peclet_T(PeT, qx, qy, qz, rho_f, cp_f, phi, l_r, l_f):
       nogil=numba_nogil)
 def explicit_C(D_fx, phi):
     dt_NeC = 1e100
-    for k in range(nz):
-        for j in range(ny):
-            for i in range(nx):
-                if L[i,j,k] != 0 and L[i,j,k] != 6:
-                    dt_NeC = min(dt_NeC,
-                        0.45 * D_fx[i,j,k] / phi[i,j,k] /
-                        (1 / dx[i]**2 + 1 / dy[j]**2 + 1/dz[k]**2))
+    for k in prange(nz):
+        for j in prange(ny):
+            for i in prange(nx):
+                dt_NeC = min(dt_NeC,
+                    0.45 * D_fx[i,j,k] / phi[i,j,k] /
+                    (1 / dx[i]**2 + 1 / dy[j]**2 + 1/dz[k]**2))
 
     return dt_NeC
 
