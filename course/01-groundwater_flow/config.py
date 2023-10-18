@@ -57,7 +57,7 @@ phi   = numpy.zeros((nx, ny, nz))         # porosity (-)
 Kx    = numpy.zeros((nx, ny, nz))         # permeability (m^2)
 Ky    = numpy.zeros((nx, ny, nz))         # permeability (m^2)
 Kz    = numpy.zeros((nx, ny, nz))         # permeability (m^2)
-c_r   = numpy.ones((nx, ny, nz)) * 1e-99  # compressiblity (1/Pa)
+c_r   = numpy.zeros((nx, ny, nz))         # compressiblity (1/Pa)
 cp_r  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
 l_r   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
 rho_r = numpy.zeros((nx, ny, nz))         # average density (kg/m^3)
@@ -71,7 +71,7 @@ mass  = numpy.zeros((3))                  # mass balance matrix
 D_fx  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
 D_fy  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
 D_fz  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-c_f   = numpy.ones((nx, ny, nz)) * 1e-99  # compressiblity (1/Pa)
+c_f   = numpy.zeros((nx, ny, nz))         # compressiblity (1/Pa)
 cp_f  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
 l_f   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
 rho_f = numpy.zeros((nx, ny, nz))         # density (kg/m^3)
@@ -108,6 +108,8 @@ Kx    += 5.0e-13
 Ky    += 5.0e-13
 cp_r  += 850.0
 cp_f  += 4150.0
+c_f   += 4.5e-10
+c_r   += 1e-10
 l_r   += 2.0
 l_f   += 0.6
 nue   += 1e-3
@@ -185,8 +187,8 @@ SOR_T = 1.0
 
 ## CONVERGENCE CRITERION FOR L2-NORM ###########################################
 CONV_P = 1e-5
-CONV_C = 1e-5
-CONV_T = 1e-5
+CONV_C = 1e-1
+CONV_T = 1e-1
 
 ## SMOLARKIEWICZ ANTI-DIFFUSION STEP ###########################################
 SMOLAR_C = False
