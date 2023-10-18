@@ -1155,6 +1155,19 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, omega=1,
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,\
       nogil=numba_nogil)
+def compute_phit(P, Pp, phi, c_f, c_r):
+    '''
+        Consideration of temporal changes in fluid storage for
+        transport equations as discussed by Goode J. (1992) Modelling 
+        Transport in Transient Ground-Water Flow: An Unacknowledged 
+        Approximation. Ground Water 30,2, 257-261
+
+    '''
+
+    return phi + ((1 - phi) * c_r + phi * c_f) * (P - Pp)
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath,cache=numba_cache,\
+      nogil=numba_nogil)
 def smolarkiewicz(C, qx, qy, qz, vx, vy, vz, dt, eps=1e-15, Sc=1.08):
     '''
     Smolarkiewicz (1983) numerical dispersion correction
@@ -1193,6 +1206,14 @@ dt     = config.dt     # initial time step size (s)
 dt_prev = dt           # plotresults dt initialisation
 t_sim = 0              # initial simulation time (s)
 n_tsteps = 0           # time step counter (-)
+
+# generate matrices for fluid storage term, specific heat capacity  and density
+# correction
+Pp = P.copy()
+phit = phi.copy()
+rho_fp = rho_f.copy()   
+cp_fp = cp_f.copy()   
+Tf = T.copy()
 
 # set counters etc. to zero
 numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = \
@@ -1314,12 +1335,19 @@ while t_sim < t:
 
     num_it_C = 0
 
+    if config.SPECTRANS or config.HEATTRANS:
+        # compute temporal changes in fluid storage
+        phit = compute_phit(P, Pp, phi, c_f, c_r)
+
     if config.SPECTRANS:
         for n in config.SPTRANS: # repeat for all transported species
             # compute only if at least one C != 0 and WC != 0
             if numpy.sum(C[:,:,:,n]) != 0.0 or numpy.sum(WC[:,:,:]) != 0.0:
+                # correct for fluid storage term and density changes
+                C[BC!=1,n] *= (rho_f / rho_fp * phi / phit)[BC!=1]
+                # solve species transport PDE system
                 dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                    C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz,
+                    C[:,:,:,n], D_fx, D_fy, D_fz, phit, rho_f, qx, qy, qz,
                     dt, BC, WC, R, omega=config.OMEGA_C, SOR=config.SOR_C,
                     C_conv=config.CONV_C, upwind=1)
 
@@ -1334,7 +1362,7 @@ while t_sim < t:
                                        vx, vy, vz, dt, eps=1e-15, Sc=1.08)
 
                     dt, dt_C, C[:,:,:,n], converged_C, num_itC = compute_C(
-                        C[:,:,:,n], D_fx, D_fy, D_fz, phi, rho_f, vx, vy,
+                        C[:,:,:,n], D_fx, D_fy, D_fz, phit, rho_f, vx, vy,
                         vz, dt, BC, WC, R, omega=config.OMEGA_C,
                         SOR=config.SOR_C, C_conv=config.CONV_C)
 
@@ -1346,8 +1374,15 @@ while t_sim < t:
 
     num_it_T = 0
     if config.HEATTRANS:
+        # correct fluid temperature for fluid storage term, density and 
+        # specific heat capacity changes
+        Tf[BT!=1] = (T * phi / phit * rho_f / rho_fp * cp_f / cp_fp)[BT!=1]
+        # equilibrate revised fluid with solid matrix temperature
+        T[BT!=1] = ((rho_r * cp_r * T * (1 - phit) + rho_f * cp_f * Tf * phit) /
+                    (rho_r * cp_r * (1 - phit) + rho_f * cp_f * phit))[BT!=1]
+        # solve heat transport PDE system
         dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f, cp_f,
-                rho_f, phi, qx, qy, qz, dt, BT, WT,
+                rho_f, phit, qx, qy, qz, dt, BT, WT,
                 omega=config.OMEGA_T, SOR=config.SOR_T,
                 T_conv=config.CONV_T)
 
@@ -1362,7 +1397,7 @@ while t_sim < t:
                                         eps=1e-15, Sc=1.08)
 
             dt, dt_T, T, converged_T, num_itT = compute_T(T, l_f,
-                    cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
+                    cp_f, rho_f, phit, vx, vy, vz, dt, BT, WT,
                     omega=config.OMEGA_T, SOR=config.SOR_T,
                     T_conv=config.CONV_T)
 
@@ -1371,6 +1406,10 @@ while t_sim < t:
             if not converged_T:
                 sys.exit('* T CONVERGENCE ERROR' +
                          ' - check dt and T_conv in compute_T')
+
+    rho_fp = rho_f.copy()
+    cp_fp = cp_f.copy()
+    Pp = P.copy()
 
     # calculate chemical reactions
     if config.CHEMREACT:
@@ -1400,9 +1439,9 @@ while t_sim < t:
 
     # dynamic boundary conditions
     if config.DYNAMICBC:
-        bc_inc, P, T, C, BP, BT, BC, WP, WT, WC = \
+        bc_inc, P, T, C, BP, BT, BC, WP, WT, WC, Kx, Ky, Kz  = \
             config.dynamic_bc(t_sim+dt, bc_inc, P, T, C, BP, BT, BC, WP, WT,
-                    WC)
+                    WC, Kx, Ky, Kz)
 
     # calculate mass balances
     if config.MASSBALAN:
