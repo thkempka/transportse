@@ -423,34 +423,40 @@ def index_list(BC):
 
 @njit(parallel=False, fastmath=numba_fastmath, cache=numba_cache)
 def flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, dt_P):
+    '''
+        Local flow balance error e = I - O - S + WP after Panday et al.
+        (2018), computed for ALL cells including pressure-Dirichlet
+        cells, whose imbalance (water exchanged with the exterior
+        reservoir) would otherwise remain uncorrected in the transport
+        solution and cause concentration overshoot at these cells
+    '''
     e = numpy.zeros((nx, ny, nz))
     for k in prange(nz):
         for j in prange(ny):
             for i in prange(nx):
-                if not BP[i, j, k]:
-                    if i != nx-1:
-                        e[i, j, k] -= (qx[i, j, k] / dx[i]
-                                    * harm(i+1, j, k, i, j, k, rho_f, 0))
-                    if i != 0:
-                        e[i, j, k] += (qx[i-1, j, k] / dx[i]
-                                    * harm(i-1, j, k, i, j, k, rho_f, 0))
-                    if j != ny-1:
-                        e[i, j, k] -= (qy[i, j, k] / dy[j]
-                                    * harm(i, j+1, k, i, j, k, rho_f, 1))
-                    if j != 0:
-                        e[i, j, k] += (qy[i, j-1, k] / dy[j]
-                                    * harm(i, j-1, k, i, j, k, rho_f, 1))
-                    if k != nz-1:
-                        e[i, j, k] -= (qz[i, j, k] / dz[k]
-                                    * harm(i, j, k+1, i, j, k, rho_f, 2))
-                    if k != 0:
-                        e[i, j, k] += (qz[i, j, k-1] / dz[k]
-                                    * harm(i, j, k-1, i, j, k, rho_f, 2))
+                if i != nx-1:
+                    e[i, j, k] -= (qx[i, j, k] / dx[i]
+                                * harm(i+1, j, k, i, j, k, rho_f, 0))
+                if i != 0:
+                    e[i, j, k] += (qx[i-1, j, k] / dx[i]
+                                * harm(i-1, j, k, i, j, k, rho_f, 0))
+                if j != ny-1:
+                    e[i, j, k] -= (qy[i, j, k] / dy[j]
+                                * harm(i, j+1, k, i, j, k, rho_f, 1))
+                if j != 0:
+                    e[i, j, k] += (qy[i, j-1, k] / dy[j]
+                                * harm(i, j-1, k, i, j, k, rho_f, 1))
+                if k != nz-1:
+                    e[i, j, k] -= (qz[i, j, k] / dz[k]
+                                * harm(i, j, k+1, i, j, k, rho_f, 2))
+                if k != 0:
+                    e[i, j, k] += (qz[i, j, k-1] / dz[k]
+                                * harm(i, j, k-1, i, j, k, rho_f, 2))
 
-                    por = phi[i, j, k]
-                    e[i, j, k] += (WP[i, j, k] + ((1 - por)
-                        * c_r[i, j, k] + por * c_f[i, j, k]) 
-                        * (P[i, j, k] - Pn[i, j, k]) * rho_f[i, j, k] / dt_P)
+                por = phi[i, j, k]
+                e[i, j, k] += (WP[i, j, k] + ((1 - por)
+                    * c_r[i, j, k] + por * c_f[i, j, k]) 
+                    * (P[i, j, k] - Pn[i, j, k]) * rho_f[i, j, k] / dt_P)
 
     return e
 
@@ -808,29 +814,41 @@ def compute_P(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
       nogil=numba_nogil)
 def cg_matvec(x, Ax, aE, aW, aN, aS, aT, aB, diag):
     '''
-        Ax = diag * x - sum(a_face * x_neighbour), flattened prange for
-        parallel execution independent of the grid aspect ratio
+        Ax = diag * x - sum(a_face * x_neighbour)
+        The branch-free interior loop is unit-stride and auto-vectorisable;
+        the boundary shell is handled separately.
     '''
-    n = nx * ny * nz
     nxy = nx * ny
+    for k in prange(1, nz-1):
+        for j in range(1, ny-1):
+            for i in range(1, nx-1):
+                Ax[i, j, k] = (diag[i, j, k] * x[i, j, k]
+                               - aE[i, j, k] * x[i+1, j, k]
+                               - aW[i, j, k] * x[i-1, j, k]
+                               - aN[i, j, k] * x[i, j+1, k]
+                               - aS[i, j, k] * x[i, j-1, k]
+                               - aT[i, j, k] * x[i, j, k+1]
+                               - aB[i, j, k] * x[i, j, k-1])
+    n = nx * ny * nz
     for ii in prange(n):
         k = ii // nxy
         j = (ii // nx) % ny
         i = ii % nx
-        s = diag[i, j, k] * x[i, j, k]
-        if i != nx-1:
-            s -= aE[i, j, k] * x[i+1, j, k]
-        if i != 0:
-            s -= aW[i, j, k] * x[i-1, j, k]
-        if j != ny-1:
-            s -= aN[i, j, k] * x[i, j+1, k]
-        if j != 0:
-            s -= aS[i, j, k] * x[i, j-1, k]
-        if k != nz-1:
-            s -= aT[i, j, k] * x[i, j, k+1]
-        if k != 0:
-            s -= aB[i, j, k] * x[i, j, k-1]
-        Ax[i, j, k] = s
+        if i == 0 or i == nx-1 or j == 0 or j == ny-1 or k == 0 or k == nz-1:
+            s = diag[i, j, k] * x[i, j, k]
+            if i != nx-1:
+                s -= aE[i, j, k] * x[i+1, j, k]
+            if i != 0:
+                s -= aW[i, j, k] * x[i-1, j, k]
+            if j != ny-1:
+                s -= aN[i, j, k] * x[i, j+1, k]
+            if j != 0:
+                s -= aS[i, j, k] * x[i, j-1, k]
+            if k != nz-1:
+                s -= aT[i, j, k] * x[i, j, k+1]
+            if k != 0:
+                s -= aB[i, j, k] * x[i, j, k-1]
+            Ax[i, j, k] = s
 
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
@@ -1463,12 +1481,30 @@ time_start = time.time()
 plotresults()
 
 rhof_prev = numpy.zeros_like(rho_f)
+P_prev2 = P.copy()      # pressure two time steps ago (initial guess)
+dt_CFL_prev = 1e10      # CFL time step limit of the previous time step
 
 while t_sim < t:
 
     SIA_filled = False
     SIA_iter = 0
     SIA_diff = 0
+
+    # extrapolated initial guess for the pressure solution
+    # (P_prev + (P_prev - P_prev2); Dirichlet cells are excluded)
+    P_interior = (BP == 0)
+    if t_sim > 0:
+        Pprev_copy = P.copy()
+        P[P_interior] = 2.0 * P[P_interior] - P_prev2[P_interior]
+        P_prev2[:] = Pprev_copy
+    else:
+        P_prev2[:] = P
+
+    # predictive CFL clamp: velocities change slowly between consecutive
+    # time steps, so clamping dt before the flow solution avoids pressure
+    # solves at time steps that would be reduced afterwards anyway
+    if config.FLUIDFLOW and t_sim > 0 and not config.SIA:
+        dt = min(dt, dt_CFL_prev)
 
     while not SIA_filled and SIA_iter < config.SIA_maxit:
         ## outer SIA iteration here
@@ -1546,6 +1582,7 @@ while t_sim < t:
                             numpy.max(numpy.abs(qz) / phi / dz))
                 else:
                     dt_CFL = 1e10
+                dt_CFL_prev = dt_CFL
 
                 dt_max_C = dt_max_T = dt_max_P = dt_max_abs
 
