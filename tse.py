@@ -740,12 +740,19 @@ def compute_stencil_P(aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
 def compute_P(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
               dt_P, BP, WP,
               SOR=1.0, max_it=MAXIT_P, inc_it=1.05, max_dt=dt_max,
-              min_dt=1e-8, P_conv=1e-10):
+              min_dt=1e-8, P_conv=1e-10, Pn_prev=None):
     t_P = 0
     converged = False
     num_it = 0
     num_sub_it = 0
-    Pn = P.copy()
+    # storage term must reference the previous time step's pressure, not
+    # the (possibly extrapolated) initial guess in P, otherwise the
+    # transient term drains mass from over-extrapolated cells and the
+    # converged solution develops unphysical low/negative pressure dips
+    if Pn_prev is None:
+        Pn = P.copy()
+    else:
+        Pn = Pn_prev.copy()
 
     def solve(i, j, k):
         R = Rbase[i, j, k] / dt_P
@@ -979,7 +986,7 @@ def cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP, omega=1.0):
 @njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
 def compute_P_CG(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
                  dt_P, BP, WP, max_it=MAXIT_P, inc_it=1.05, max_dt=dt_max,
-                 min_dt=1e-8, P_conv=1e-10, pcg_omega=1.0):
+                 min_dt=1e-8, P_conv=1e-10, pcg_omega=1.0, Pn_prev=None):
     '''
         Preconditioned Conjugate Gradient solver for the pressure equation,
         solving the same linear system as the SOR solver:
@@ -988,7 +995,12 @@ def compute_P_CG(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
     t_P = 0
     converged = False
     num_it = 0
-    Pn = P.copy()
+    # storage term must reference the previous time step's pressure, not
+    # the (possibly extrapolated) initial guess in P (see compute_P)
+    if Pn_prev is None:
+        Pn = P.copy()
+    else:
+        Pn = Pn_prev.copy()
     diag = numpy.zeros((nx, ny, nz))
     b = numpy.zeros((nx, ny, nz))
     r = numpy.zeros((nx, ny, nz))
@@ -1550,14 +1562,14 @@ while t_sim < t:
                             P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
                             Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
                             max_it=MAXIT_P, P_conv=config.CONV_P,
-                            pcg_omega=CG_OMEGA)
+                            pcg_omega=CG_OMEGA, Pn_prev=P_prev2)
                 else:
                     dt, dt_P, P, Pn, converged_P, num_it_P = \
                         compute_P(
                             P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
                             Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
                             SOR=config.SOR_P, max_it=MAXIT_P,
-                            P_conv=config.CONV_P)
+                            P_conv=config.CONV_P, Pn_prev=P_prev2)
 
                 if not converged_P:
                     sys.exit('* P CONVERGENCE ERROR ' +
