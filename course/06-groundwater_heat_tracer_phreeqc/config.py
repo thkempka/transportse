@@ -240,8 +240,19 @@ if CHEMREACT:
     if sys.platform == 'linux': # fix phreeqc_dll.py os.platform entry
         os.system('sed -i s/linux2/linux/g '+str(phreeqc_mod).split("'")[3])
 
+    # NOTE on units: PHREEQC reports amounts per kg of H2O, while
+    # TRANSPORTSE operates on kg per m^3 of fluid. Concentrations taken
+    # from PHREEQC selected output must therefore be converted using the
+    # solution density and volume, e.g. via the PHREEQC Basic interpreter
+    # keywords RHO * SOLN_VOL (see USER_PUNCH in chemical_reactions).
+
     phreeqc = phreeqc_mod.IPhreeqc()
-    phreeqc.load_database(os.path.join(CFDIR, "phreeqc.dat"))
+    db_path = os.path.join(CFDIR, "phreeqc.dat")
+    if not os.path.exists(db_path):
+        # abort here instead of silently continuing without chemistry
+        raise FileNotFoundError(
+            f"The PHREEQC database file '{db_path}' was not found.")
+    phreeqc.load_database(db_path)
 
 def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem, i, j, k):
 
