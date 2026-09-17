@@ -36,7 +36,7 @@ numba_fastmath = False
 numba_tl = 'omp'
 PSOLVER = "{psolver}"
 
-lx, ly, lz = 20.0, 20.0, 10.0
+lx, ly, lz = 101.0, 51.0, 20.0
 nx, ny, nz = {nx}, {ny}, {nz}
 dx, dy, dz = numpy.ones(nx), numpy.ones(ny), numpy.full(nz, 2.0)
 
