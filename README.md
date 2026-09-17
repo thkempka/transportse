@@ -21,7 +21,9 @@ conductive and convective transport of heat.
 - Gravity effects and sloped models (model slope angle beta)
 - Red-black successive over-relaxation (SOR) pressure solver
 - Fluid storage (compressibility of fluid and rock) and source/sink terms
-- Semi-implicit approach (SIA) for density coupling
+- Sequential Iterative Approach (SIA): outer Picard iteration on the
+  fluid density for coupled flow–transport solution, relaxing the CFL
+  time-step constraint
 - Automatic time-step control: convergence-based, CFL and Neumann criteria
 
 **Species transport**
