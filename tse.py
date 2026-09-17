@@ -1267,7 +1267,14 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             por = amean(i, j, k, i+1, j, k, phi, 0)
             lf = harm(i, j, k, i+1, j, k, l_f, 0)
             lr = harm(i, j, k, i+1, j, k, l_r, 0)
-            cpf = harm(i, j, k, i+1, j, k, cp_f, 0)
+            # upwinded heat capacity of the flowing fluid: a harmonic
+            # face mean biases the advected enthalpy toward the downstream
+            # cell (heat accumulation at cells adjacent to cold Dirichlet
+            # boundaries); rho stays harmonic for mass-flux consistency
+            if qx[i, j, k] >= 0:
+                cpf = cp_f[i, j, k]
+            else:
+                cpf = cp_f[i+1, j, k]
             rhocpf = harm(i, j, k, i+1, j, k, rho_f, 0) * cpf
             A_ = ((1-por) * lr + por * lf + D_xr * rhocpf) / dd2
             S_ = rhocpf / dd
@@ -1281,7 +1288,10 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             por = amean(i, j, k, i-1, j, k, phi, 0)
             lf = harm(i, j, k, i-1, j, k, l_f, 0)
             lr = harm(i, j, k, i-1, j, k, l_r, 0)
-            cpf = harm(i, j, k, i-1, j, k, cp_f, 0)
+            if qx[i-1, j, k] > 0:
+                cpf = cp_f[i-1, j, k]
+            else:
+                cpf = cp_f[i, j, k]
             rhocpf = harm(i, j, k, i-1, j, k, rho_f, 0) * cpf
             B_ = ((1-por) * lr + por * lf + D_xl * rhocpf) / dd2
             S_ = rhocpf / dd
@@ -1295,7 +1305,10 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             por = amean(i, j+1, k,  i, j, k, phi, 1)
             lf = harm(i, j+1, k, i, j, k, l_f, 1)
             lr = harm(i, j+1, k, i, j, k, l_r, 1)
-            cpf = harm(i, j+1, k, i, j, k, cp_f, 1)
+            if qy[i, j, k] >= 0:
+                cpf = cp_f[i, j, k]
+            else:
+                cpf = cp_f[i, j+1, k]
             rhocpf = harm(i, j+1, k, i, j, k, rho_f, 1) * cpf
             C_ = ((1-por) * lr + por * lf + D_yr * rhocpf) / dd2
             S_ = rhocpf / dd
@@ -1309,7 +1322,10 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             por = amean(i, j-1, k, i, j, k, phi, 1)
             lf = harm(i, j-1, k, i, j, k, l_f, 1)
             lr = harm(i, j-1, k, i, j, k, l_r, 1)
-            cpf = harm(i, j-1, k, i, j, k, cp_f, 1)
+            if qy[i, j-1, k] > 0:
+                cpf = cp_f[i, j-1, k]
+            else:
+                cpf = cp_f[i, j, k]
             rhocpf = harm(i, j-1, k, i, j, k, rho_f, 1) * cpf
             D_ = ((1-por) * lr + por * lf + D_yl * rhocpf) / dd2
             S_ = rhocpf / dd
@@ -1323,7 +1339,10 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             por = amean(i, j, k+1, i, j, k, phi, 2)
             lf = harm(i, j, k+1, i, j, k, l_f, 2)
             lr = harm(i, j, k+1, i, j, k, l_r, 2)
-            cpf = harm(i, j, k+1, i, j, k, cp_f, 2)
+            if qz[i, j, k] >= 0:
+                cpf = cp_f[i, j, k]
+            else:
+                cpf = cp_f[i, j, k+1]
             rhocpf = harm(i, j, k+1, i, j, k, rho_f, 2) * cpf
             E_ = ((1-por) * lr + por * lf + D_zr * rhocpf) / dd2
             S_ = rhocpf / dd
@@ -1337,7 +1356,10 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             por = amean(i, j, k-1, i, j, k, phi, 2)
             lf = harm(i, j, k-1, i, j, k, l_f, 2)
             lr = harm(i, j, k-1, i, j, k, l_r, 2)
-            cpf = harm(i, j, k-1, i, j, k, cp_f, 2)
+            if qz[i, j, k-1] > 0:
+                cpf = cp_f[i, j, k-1]
+            else:
+                cpf = cp_f[i, j, k]
             rhocpf = harm(i, j, k-1, i, j, k, rho_f, 2) * cpf
             F_ = ((1-por) * lr + por * lf + D_zl * rhocpf) / dd2
             S_ = rhocpf / dd
