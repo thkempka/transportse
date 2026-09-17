@@ -1143,8 +1143,8 @@ def onoff(flag):
 
 
 print()
-print_row('MODEL', '%d x %d x %d nodes | %g x %g x %g m'
-          % (nx, ny, nz, lx, ly, lz))
+print_row('MODEL', '%d x %d x %d nodes (%d total) | %g x %g x %g m'
+          % (nx, ny, nz, nx*ny*nz, lx, ly, lz))
 print_row('SPACING', 'dx %.2f m | dy %.2f m | dz %.2f m (min/max)'
           % (numpy.min(dx), numpy.min(dy), numpy.min(dz)))
 print_row('TIME', 't %.3e s | dt %.3e s | dt_max %.3e s' % (t, dt, dt_max))
@@ -1157,6 +1157,8 @@ print_row('', 'FLUIDPROP [%s]  CHEMREACT [%s]  DYNAMICBC [%s]'
 print_row('', 'MASSBALAN [%s]  SIA [%s]  SMOLAR_C [%s]  SMOLAR_T [%s]'
           % (onoff(config.MASSBALAN), onoff(config.SIA),
              onoff(config.SMOLAR_C), onoff(config.SMOLAR_T)))
+print_row('', 'IMBLFLO C [%s]  T [%s]'
+          % (onoff(config.C_IMBLFLO), onoff(config.T_IMBLFLO)))
 print_row('SOLVER', 'SOR_P %.4f | SOR_C %.4f | SOR_T %.4f'
           % (config.SOR_P, config.SOR_C, config.SOR_T))
 print_row('WEIGHTING', 'OMEGA_C %g | OMEGA_T %g'
@@ -1274,7 +1276,7 @@ while t_sim < t:
                         print(' [dt_NeC] %8.2e [dt_NeT] %8.2e' %
                             (dt_max_C, dt_max_T))
 
-                    print(' [CFL] %6.2f%% | Pe_T %.3f/%.3f/%.3f | Pe_C %.3f/%.3f/%.3f'
+                    print(' [CFL] %6.2f%% | Pe_T %.1e/%.1e/%.1e | Pe_C %.1e/%.1e/%.1e'
                         % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T,
                            Pex_C, Pey_C, Pez_C))
                     print('[P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f'
