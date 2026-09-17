@@ -16,5 +16,7 @@
 massbal.csv
 .pi/
 .vscode/
+A?ENTS.md
+attic/
 # uv environment
 .venv/
