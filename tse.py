@@ -1208,8 +1208,11 @@ while t_sim < t:
 
 
                 if config.HEATTRANS or config.SPECTRANS:
+                    # dt is the time step actually used for the converged
+                    # P solution (returned t_P), while dt_P is the increased
+                    # time step for the next flow solution
                     e = flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, 
-                                   dt_P)
+                                   dt)
 
                 # Check CFL and Neumann criteria to adapt maximum time step as
                 # required
@@ -1301,7 +1304,7 @@ while t_sim < t:
                             C[:, :, :, n], D_fx[:, :, :, n],
                             D_fy[:, :, :, n], D_fz[:, :, :, n],
                             phi, rho_f, vx, vy, vz, dt, BC, WC[:, :, :, n],
-                            R, e, omega=config.OMEGA_C, 
+                            R, ZEROS, omega=config.OMEGA_C, 
                             max_it=MAXIT_C, SOR=config.SOR_C,
                             C_conv=config.CONV_C)
 
@@ -1347,7 +1350,7 @@ while t_sim < t:
 
                 dt, dt_T, T, converged_T, num_itT = \
                     compute_T(T, l_f, cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
-                            e, omega=config.OMEGA_T, max_it=MAXIT_T,
+                            ZEROS, omega=config.OMEGA_T, max_it=MAXIT_T,
                             SOR=config.SOR_T, T_conv=config.CONV_T)
 
                 num_it_T += num_itT
