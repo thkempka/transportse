@@ -1,12 +1,17 @@
 '''
     TRANSPORTSE configuration file
+
+    Example 5: All processes with surrogate chemistry
 '''
 
 import os
 import sys
 import numpy
-import joblib
 from numba import njit
+
+# base directory of this config file (data files are loaded relative to it,
+# independent of the current working directory)
+CFDIR = os.path.dirname(os.path.abspath(__file__))
 
 # PARALLELISATION AND TUNING ###################################################
 parallel_processes = 1   # number of threads
@@ -41,6 +46,11 @@ CHEMREACT = True   # chemical reactions
 DYNAMICBC = False  # Use dynamic boundary conditions
 MASSBALAN = False  # calculate mass balances
 DTCHEM    = 1      # chemical reactions time stepping
+C_IMBLFLO = False
+T_IMBLFLO = False
+SIA       = False
+SIA_maxit = 5
+SIA_conv  = 1e-4
 
 ## NUMBER OF SPECIES ###########################################################
 IONS = 2			             # (0) Tracer (1) Ca
@@ -59,21 +69,23 @@ c_r   = numpy.zeros((nx, ny, nz))         # compressiblity (1/Pa)
 cp_r  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
 l_r   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
 rho_r = numpy.zeros((nx, ny, nz))         # average density (kg/m^3)
-l_l   = numpy.zeros((nx, ny, nz))         # longitudinal dispersion length (m)
-l_t   = numpy.zeros((nx, ny, nz))         # transversal dispersion length (m)
+lf_l   = numpy.zeros((nx, ny, nz))        # longitudinal dispersion length (m)
+lt_l   = numpy.zeros((nx, ny, nz))        # longitudinal dispersion length (m)
+lf_t   = numpy.zeros((nx, ny, nz))        # transversal dispersion length (m)
+lt_t   = numpy.zeros((nx, ny, nz))        # transversal dispersion length (m)
 L     = numpy.zeros((nx, ny, nz))         # lithology marker (-)
 R     = numpy.ones((nx, ny, nz))          # retardation coefficient (-)
 mass  = numpy.zeros((3))                  # mass balance matrix
 
 ## FLUID #######################################################################
-D_fx  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-D_fy  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-D_fz  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-c_f   = numpy.zeros((nx, ny, nz))         # compressiblity (1/Pa)
-cp_f  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
-l_f   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
-rho_f = numpy.zeros((nx, ny, nz))         # density (kg/m^3)
-nue   = numpy.zeros((nx, ny, nz))         # viscosity (Pa*s)
+D_fx  = numpy.zeros((nx, ny, nz, SPECIES))  # diffusion coefficient (m^2/s)
+D_fy  = numpy.zeros((nx, ny, nz, SPECIES))  # diffusion coefficient (m^2/s)
+D_fz  = numpy.zeros((nx, ny, nz, SPECIES))  # diffusion coefficient (m^2/s)
+c_f   = numpy.zeros((nx, ny, nz))           # compressiblity (1/Pa)
+cp_f  = numpy.zeros((nx, ny, nz))           # heat capacity (J/kg/K)
+l_f   = numpy.zeros((nx, ny, nz))           # heat conductivity (W/m/K)
+rho_f = numpy.zeros((nx, ny, nz))           # density (kg/m^3)
+nue   = numpy.zeros((nx, ny, nz))           # viscosity (Pa*s)
 
 ## PRIMARY VARIABLES ###########################################################
 P = numpy.zeros((nx, ny, nz))           # pore pressure (kg/m/s^2 = Pa)
@@ -87,9 +99,9 @@ BC = numpy.zeros((nx, ny, nz))   # species boundary conditions
 BT = numpy.zeros((nx, ny, nz))   # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = numpy.zeros((nx, ny, nz))   # fluid flow (1/s)
-WT = numpy.zeros((nx, ny, nz))   # heat flow  (W/m^3)
-WC = numpy.zeros((nx, ny, nz))   # species flow (kg/m^3/s)
+WP = numpy.zeros((nx, ny, nz))            # fluid flow (1/s)
+WT = numpy.zeros((nx, ny, nz))            # heat flow  (W/m^3)
+WC = numpy.zeros((nx, ny, nz, SPECIES))   # species flow (kg/m^3/s)
 
 ## FLOW VELOCITIES #############################################################
 qx = numpy.zeros((nx, ny, nz))     # fluid flow velocity (m/s)
@@ -100,8 +112,8 @@ qz = numpy.zeros((nx, ny, nz))     # fluid flow velocity (m/s)
 
 ## EQUATION OF STATE ###########################################################
 # read temperature, density and  viscosity from phreeqc output
-data = numpy.loadtxt('transportse-eos.csv', delimiter='\t', skiprows=2, 
-        usecols=(8,9,10))
+data = numpy.loadtxt(os.path.join(CFDIR, 'transportse-eos.csv'),
+        delimiter='\t', skiprows=2, usecols=(8,9,10))
 
 # fit polynomial functions using temperature
 c_dens = numpy.polyfit(data[:,0], data[:,1], 4)
@@ -113,8 +125,8 @@ p_visc = numpy.poly1d(c_visc)
 
 ## CHEMICAL SURROGATE MODEL PARAMETERS #########################################
 # read temperature and dissolved Ca from phreeqc output
-data = numpy.loadtxt('anhydrite_solubility-phreeqc.csv', delimiter='\t',
-        skiprows=2, usecols=(8,9))
+data = numpy.loadtxt(os.path.join(CFDIR, 'anhydrite_solubility-phreeqc.csv'),
+        delimiter='\t', skiprows=2, usecols=(8,9))
 
 # fit polynomial functions using temperature
 c_anhy = numpy.polyfit(data[:,0], data[:,1], 4)
@@ -141,10 +153,10 @@ nue   += p_visc(100)
 rho_f += p_dens(100)
 #rho_f[wx,wy,:] = p_dens(20)
 rho_r += 2500
-D_fx  += 5.0e-8
+D_fx  += 5.0e-9
 D_fy  = D_fx.copy()
-l_l   += 0.5
-l_t   += 0.5
+lf_l   += 0.5
+lf_t   += 0.5
 
 # BOUNDARY CONDITIONS ##########################################################
 
@@ -155,7 +167,7 @@ BP[:,0,:] = 1        # Bottom boundary open (Dirichlet-BC)
 BP[:,-1,:] = 1       # Top boundary open (Dirichlet-BC)
 
 # Injection rate at injection well (50 m^3/h)
-WP[wx,wy,:] = 50 / 3600 / dx[wx] / dy[wy] / dz[0]
+WP[wx, wy, :] = 50 / 3600 / dx[wx] / dy[wy] / dz[0] * rho_f[wx, wy, :]
 
 ## HEAT TRANSPORT
 BT[0,:,:] = 1        # Left boundary open (Dirichlet-BC)
@@ -227,10 +239,10 @@ if CHEMREACT:
         os.system('sed -i s/linux2/linux/g '+str(phreeqc_mod).split("'")[3])
 
     phreeqc = phreeqc_mod.IPhreeqc()
-    phreeqc.load_database(r"phreeqc.dat")
+    phreeqc.load_database(os.path.join(CFDIR, "phreeqc.dat"))
 
 @njit
-def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz):
+def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem, i, j, k):
 
     # calculate temperature-dependent solubility
     sol = c_anhy[4] + c_anhy[3] * T + c_anhy[2] * T**2 + \
@@ -245,22 +257,22 @@ def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz):
     if d_anhy < 0: # dissolution
         if C[2] > abs(d_anhy):
             C[2] += d_anhy 
-            C[1] = sol                          
+            C[1] = sol
         else: # complete dissolution
             C[1] += C[2] / rho_f / phi 
             C[2] = 0
     else: # precipitation
         C[2] += d_anhy
-        C[1] = sol                          
+        C[1] = sol
 
-    return C, rho_f, phi, Kx, Ky, Kz
+    return C, P, T, rho_f, phi, Kx, Ky, Kz
 
 #===============================================================================
 
 # SOLVER PARAMETERS ############################################################
 ## TIME STEP SETTINGS ##########################################################
 dt =     .001  # initial time step size
-dt_max = 86400
+dt_max = 1e3
 
 ## IMPLICIT OR EXPLICIT SOLUTION (0 <= OMEGA <= 1)
 OMEGA_C = 1

@@ -7,7 +7,6 @@
 import os
 import sys
 import numpy
-import joblib
 from numba import njit
 
 # PARALLELISATION AND TUNING ###################################################
@@ -32,7 +31,7 @@ g = 9.80665        # gravitational acceleration (m/s^2)
 beta =  0          # model slope angle (°)
 
 ## SIMULATION TIME #############################################################
-t = 86400 * 1      # simulation time (s)
+t = 86400 * 4      # simulation time (s)
 
 ## PROCESSES ###################################################################
 FLUIDFLOW = True   # fluid flow (qx, qy must be given if set to False)
@@ -43,9 +42,14 @@ CHEMREACT = False  # chemical reactions
 DYNAMICBC = False  # Use dynamic boundary conditions
 MASSBALAN = False  # calculate mass balances
 DTCHEM    = 1      # chemical reactions time stepping
+C_IMBLFLO = False
+T_IMBLFLO = False
+SIA       = False
+SIA_maxit = 5
+SIA_conv  = 1e-4
 
 ## NUMBER OF SPECIES ###########################################################
-IONS = 1			             # Species
+IONS = 1			             # (0) TRACER
 MINERALS = 1                     # Minerals
                                  #
 SPECIES = IONS + MINERALS        # total number of species
@@ -61,21 +65,23 @@ c_r   = numpy.zeros((nx, ny, nz))         # compressiblity (1/Pa)
 cp_r  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
 l_r   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
 rho_r = numpy.zeros((nx, ny, nz))         # average density (kg/m^3)
-l_l   = numpy.zeros((nx, ny, nz))         # longitudinal dispersion length (m)
-l_t   = numpy.zeros((nx, ny, nz))         # transversal dispersion length (m)
+lf_l   = numpy.zeros((nx, ny, nz))        # longitudinal dispersion length (m)
+lt_l   = numpy.zeros((nx, ny, nz))        # longitudinal dispersion length (m)
+lf_t   = numpy.zeros((nx, ny, nz))        # transversal dispersion length (m)
+lt_t   = numpy.zeros((nx, ny, nz))        # transversal dispersion length (m)
 L     = numpy.zeros((nx, ny, nz))         # lithology marker (-)
 R     = numpy.ones((nx, ny, nz))          # retardation coefficient (-)
 mass  = numpy.zeros((3))                  # mass balance matrix
 
 ## FLUID #######################################################################
-D_fx  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-D_fy  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-D_fz  = numpy.zeros((nx, ny, nz))         # diffusion coefficient (m^2/s)
-c_f   = numpy.zeros((nx, ny, nz))         # compressiblity (1/Pa)
-cp_f  = numpy.zeros((nx, ny, nz))         # heat capacity (J/kg/K)
-l_f   = numpy.zeros((nx, ny, nz))         # heat conductivity (W/m/K)
-rho_f = numpy.zeros((nx, ny, nz))         # density (kg/m^3)
-nue   = numpy.zeros((nx, ny, nz))         # viscosity (Pa*s)
+D_fx  = numpy.zeros((nx, ny, nz, SPECIES))  # diffusion coefficient (m^2/s)
+D_fy  = numpy.zeros((nx, ny, nz, SPECIES))  # diffusion coefficient (m^2/s)
+D_fz  = numpy.zeros((nx, ny, nz, SPECIES))  # diffusion coefficient (m^2/s)
+c_f   = numpy.zeros((nx, ny, nz))           # compressiblity (1/Pa)
+cp_f  = numpy.zeros((nx, ny, nz))           # heat capacity (J/kg/K)
+l_f   = numpy.zeros((nx, ny, nz))           # heat conductivity (W/m/K)
+rho_f = numpy.zeros((nx, ny, nz))           # density (kg/m^3)
+nue   = numpy.zeros((nx, ny, nz))           # viscosity (Pa*s)
 
 ## PRIMARY VARIABLES ###########################################################
 P = numpy.zeros((nx, ny, nz))           # pore pressure (kg/m/s^2 = Pa)
@@ -89,9 +95,9 @@ BC = numpy.zeros((nx, ny, nz))   # species boundary conditions
 BT = numpy.zeros((nx, ny, nz))   # thermal boundary conditions
 
 ## SINK AND SOURCE TERMS #######################################################
-WP = numpy.zeros((nx, ny, nz))   # fluid flow (1/s)
-WT = numpy.zeros((nx, ny, nz))   # heat flow  (W/m^3)
-WC = numpy.zeros((nx, ny, nz))   # species flow (kg/m^3/s)
+WP = numpy.zeros((nx, ny, nz))            # fluid flow (1/s)
+WT = numpy.zeros((nx, ny, nz))            # heat flow  (W/m^3)
+WC = numpy.zeros((nx, ny, nz, SPECIES))   # species flow (kg/m^3/s)
 
 ## FLOW VELOCITIES #############################################################
 qx = numpy.zeros((nx, ny, nz))     # fluid flow velocity (m/s)
@@ -103,10 +109,11 @@ qz = numpy.zeros((nx, ny, nz))     # fluid flow velocity (m/s)
 wx = int(nx/2)
 wy = int(ny/2)
 
+# define parameters
 phi   += 0.15
 Kx    += 5.0e-13
 Ky    += 5.0e-13
-cp_r  += 850.0
+cp_r  += 1000.0
 cp_f  += 4150.0
 c_f   += 4.5e-10
 c_r   += 1e-10
@@ -117,17 +124,19 @@ rho_f += 1e3
 rho_r += 2500
 D_fx  += 5.0e-9
 D_fy  = D_fx.copy()
-l_l   += 0.
-l_t   += 0.
+lf_l   += 0.5
+lf_t   += 0.5
 
 # BOUNDARY CONDITIONS ##########################################################
+
+## FLUID FLOW
 BP[0,:,:] = 1        # Left boundary open (Dirichlet-BC)
 BP[-1,:,:] = 1       # Right boundary open (Dirichlet-BC)
 BP[:,0,:] = 1        # Bottom boundary open (Dirichlet-BC)
 BP[:,-1,:] = 1       # Top boundary open (Dirichlet-BC)
 
 # Injection rate at injection well (50 m^3/h)
-WP[wx,wy,:] = 50 / 3600 / dx[wx] / dy[wy] / dz[0]
+WP[wx, wy, :] = 50 / 3600 / dx[wx] / dy[wy] / dz[0] * rho_f[wx, wy, :]
 
 # INITIAL CONDITIONS ###########################################################
 P[:,:,:] = 1.5e7             # Initial reservoir pressure
@@ -137,12 +146,12 @@ P[:,:,:] = 1.5e7             # Initial reservoir pressure
 def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
                      Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r):
     '''
-        nue     viscosity (Pa*s)
-        rho_f   density (kg/m^3)
-        c_f     isothermal compressibility (1/Pa)
-        cp_f    heat capacity (J/kg/K)
-        l_f     thermal conductivity (W/m/K)
-        D_f     diffusion coefficient (m^2/s)
+        nue            viscosity (Pa*s)
+        rho_f          density (kg/m^3)
+        c_f            isothermal compressibility (1/Pa)
+        cp_f           heat capacity (J/kg/K)
+        l_f            thermal conductivity (W/m/K)
+        D_f{x,y,z}     diffusion coefficient (m^2/s)
         ...
     '''
 
@@ -161,16 +170,17 @@ if CHEMREACT:
     phreeqc = phreeqc_mod.IPhreeqc()
     phreeqc.load_database(r"phreeqc.dat")
 
-def chemical_reactions(i,j,k):
+@njit
+def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem, i, j, k):
 
-    return C[i,j,k], rho_f[i,j,k], phi[i,j,k], Kx[i,j,k], Ky[i,j,k], Kz[i,j,k]
+    return C, P, T, rho_f, phi, Kx, Ky, Kz
 
 #===============================================================================
 
 # SOLVER PARAMETERS ############################################################
 ## TIME STEP SETTINGS ##########################################################
 dt =     .001  # initial time step size
-dt_max = 86400
+dt_max = 1e3
 
 ## IMPLICIT OR EXPLICIT SOLUTION (0 <= OMEGA <= 1)
 OMEGA_C = 1
