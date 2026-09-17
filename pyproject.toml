@@ -1,0 +1,34 @@
+[project]
+name = "transportse"
+version = "0.2.0"
+description = "TRANSPORT Simulation Environment - fluid flow and coupled transport of heat and chemical species in porous media"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["COPYING", "LICENSE"]
+authors = [
+    { name = "Thomas Kempka", email = "kempka@gfz.de" },
+]
+requires-python = ">=3.13"
+dependencies = [
+    "cantera>=3.2",
+    "intel-openmp>=2025.3",
+    "joblib>=1.5",
+    "matplotlib>=3.10",
+    "mpl-ascii>=1.0",
+    "numba>=0.65",
+    "numpy>=2.3",
+    "phreeqpy>=0.6",
+    "plotly>=6.5",
+    "pyevtk>=1.6",
+    "pyvista>=0.47",
+    "scipy>=1.17",
+    "streamlit>=1.54",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+]
+
+[tool.uv]
+package = false

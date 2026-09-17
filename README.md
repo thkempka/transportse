@@ -6,9 +6,13 @@
 
 Python script to calculate fluid flow in porous media, and advective, diffusive and dispersive transport of chemical species as well as conductive and convective transport of heat.
 
-Installation of miniforge or mambaforge environment (for Anaconda please check documentation):
+Installation (requires [uv](https://docs.astral.sh/uv/), creates a local .venv):
 
-    mamba|conda env create --file=environment.yml
+    uv sync
+
+Run with the project environment:
+
+    uv run python tse.py config.py
 
 tse.py: program code (requires custom config file to run)
 
