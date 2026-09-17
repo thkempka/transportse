@@ -65,18 +65,18 @@ if numba_parallel:
     set_num_threads(parallel_processes)
 
 # PRINT GREAT BANNER ##########################################################
-print('\n\033[93m+------------------------------------------+\033[0m')
-print(
-    '\n\033[96m'
-    + '████████╗██████╗  █████╗ ███╗   ██╗███████╗██████╗  ██████╗ ██████╗ ████████╗███████╗███████╗\n'
-    + '╚══██╔══╝██╔══██╗██╔══██╗████╗  ██║██╔════╝██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝██╔════╝██╔════╝\n'
-    + '   ██║   ██████╔╝███████║██╔██╗ ██║███████╗██████╔╝██║   ██║██████╔╝   ██║   ███████╗█████╗   \n'
-    + '   ██║   ██╔══██╗██╔══██║██║╚██╗██║╚════██║██╔═══╝ ██║   ██║██╔══██╗   ██║   ╚════██║██╔══╝   \n'
-    + '   ██║   ██║  ██║██║  ██║██║ ╚████║███████║██║     ╚██████╔╝██║  ██║   ██║   ███████║███████╗ \n'
-    + '   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚══════╝ \n'
-    + '\033[0m\n'
-    + '\033[93m+---| TRANSPORT Simulation Environment |---+'
-    + '\n\033[0m')
+BAR = '+' + '-' * 76 + '+'
+
+LOGO = r'''    ___________  ___   _   _  ___________ ___________ _____ _____ _____
+   |_   _| ___ \/ _ \ | \ | |/  ___| ___ \  _  | ___ \_   _/  ___|  ___|
+     | | | |_/ / /_\ \|  \| |\ `--.| |_/ / | | | |_/ / | | \ `--.| |__
+     | | |    /|  _  || . ` | `--. \  __/| | | |    /  | |  `--. \  __|
+     | | | |\ \| | | || |\  |/\__/ / |   \ \_/ / |\ \  | | /\__/ / |___
+     \_/ \_| \_\_| |_|\_| \_/\____/\_|    \___/\_| \_| \_/ \____/\____/'''
+
+print('\n\033[93m' + BAR + '\033[0m')
+print('\033[96m' + LOGO + '\033[0m')
+print('\033[93m' + '+---| TRANSPORT Simulation Environment'.ljust(77, '-') + '+\033[0m')
 
 # MODEL DIMENSIONS AND SPATIAL DISCRETISATION #################################
 lx = config.lx
@@ -1128,31 +1128,42 @@ numitP = numitC = num_it_C = num_itC = numitT = num_CFL = max_DT = \
 
 dt_max_abs = dt_max    # define maximum simulation time
 
-print('\033[1mFLUIDFLOW\033[0m:', config.FLUIDFLOW)
-print('\033[1mSPECTRANS\033[0m:', config.SPECTRANS)
-print('\033[1mHEATTRANS\033[0m:', config.HEATTRANS)
-print('\033[1mFLUIDPROP\033[0m:', config.FLUIDPROP)
-print('\033[1mCHEMREACT\033[0m:', config.CHEMREACT)
-print('\033[1mDYNAMICBC\033[0m:', config.DYNAMICBC)
-print('\033[1mMASSBALAN\033[0m:', config.MASSBALAN)
-# print('\033[1mRHOFPC\033[0m   :', config.RHOFPC)
-print('\033[1mSIA\033[0m      :', config.SIA)
-print('\033[1mNUM_CORES\033[0m:', config.parallel_processes)
+def print_row(label, text):
+    print('  \033[1m%-12s\033[0m%s' % (label, text))
+
+
+def onoff(flag):
+    return '\033[32mon\033[0m' if flag else '\033[90moff\033[0m'
+
+
+print()
+print_row('MODEL', '%d x %d x %d nodes | %g x %g x %g m'
+          % (nx, ny, nz, lx, ly, lz))
+print_row('SPACING', 'dx %.2f m | dy %.2f m | dz %.2f m (min/max)'
+          % (numpy.min(dx), numpy.min(dy), numpy.min(dz)))
+print_row('TIME', 't %.3e s | dt %.3e s | dt_max %.3e s' % (t, dt, dt_max))
+print_row('PROCESSES', 'FLUIDFLOW [%s]  SPECTRANS [%s]  HEATTRANS [%s]'
+          % (onoff(config.FLUIDFLOW), onoff(config.SPECTRANS),
+             onoff(config.HEATTRANS)))
+print_row('', 'FLUIDPROP [%s]  CHEMREACT [%s]  DYNAMICBC [%s]'
+          % (onoff(config.FLUIDPROP), onoff(config.CHEMREACT),
+             onoff(config.DYNAMICBC)))
+print_row('', 'MASSBALAN [%s]  SIA [%s]  SMOLAR_C [%s]  SMOLAR_T [%s]'
+          % (onoff(config.MASSBALAN), onoff(config.SIA),
+             onoff(config.SMOLAR_C), onoff(config.SMOLAR_T)))
+print_row('SOLVER', 'SOR_P %.4f | SOR_C %.4f | SOR_T %.4f'
+          % (config.SOR_P, config.SOR_C, config.SOR_T))
+print_row('WEIGHTING', 'OMEGA_C %g | OMEGA_T %g'
+          % (config.OMEGA_C, config.OMEGA_T))
+print_row('CONVERGENCE', 'P %.1e | C %.1e | T %.1e'
+          % (config.CONV_P, config.CONV_C, config.CONV_T))
+print_row('PARALLEL', '%d thread(s) | numba threading layer %s'
+          % (config.parallel_processes, config.numba_tl))
 if config.CHEMREACT:
-    print('\033[1mCHEMCORES\033[0m:', config.parallel_chemistry)
-    print('\033[1mDTCHEM   \033[0m:', config.DTCHEM)
-print('lx: %.2f m ly: %.2f m lz: %.2f m\nnx: %d ny: %d nz: %d\n'
-      % (lx, ly, lz, nx, ny, nz) +
-      'min dx: %.2f m dy %.2f m dz %.2f m\n'
-      % (numpy.min(dx), numpy.min(dy), numpy.min(dz)) +
-      'max dx: %.2f m dy %.2f m dz %.2f m'
-      % (numpy.max(dx), numpy.max(dy), numpy.max(dz)))
-print('\033[1mOMEGA_C:\033[0m', config.OMEGA_C,
-      '\033[1mOMEGA_T:\033[0m', config.OMEGA_T)
-print('\033[1mSOR_P:\033[0m', round(config.SOR_P, 4),
-      '\033[1mSOR_C:\033[0m', round(config.SOR_C, 4),
-      '\033[1mSOR_T:\033[0m', round(config.SOR_T, 4), '\n')
-print('\033[93m+------------------------------------------+\033[0m')
+    print_row('CHEMISTRY', '%d thread(s) | dt_chem %g s'
+              % (config.parallel_chemistry, config.DTCHEM))
+print()
+print('\033[93m' + BAR + '\033[0m')
 
 time_start = time.time()
 plotresults()
@@ -1257,11 +1268,10 @@ while t_sim < t:
                         print(' [dt_NeC] %8.2e [dt_NeT] %8.2e' %
                             (dt_max_C, dt_max_T))
 
-                    print(' [%%CFL] %6.2f [PTx] %6.4f [PTy] %6.4f [PTz] %6.4f'
-                        % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T) +
-                        ' [PCx] %6.4f [PCy] %6.4f [PCz] %6.4f' %
-                        (Pex_C, Pey_C, Pez_C))
-                    print(' [P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f'
+                    print(' [CFL] %6.2f%% | Pe_T %.3f/%.3f/%.3f | Pe_C %.3f/%.3f/%.3f'
+                        % (dt/dt_CFL*100, Pex_T, Pey_T, Pez_T,
+                           Pex_C, Pey_C, Pez_C))
+                    print('[P+] %6.2e [P-] %6.2e [T+] %6.4f [T-] %6.4f'
                         % (numpy.max(P), numpy.min(P), numpy.max(T),
                             numpy.min(T)) +
                         ' [C+] %6.4f [C-] %6.4f' % (numpy.max(C), 
@@ -1453,9 +1463,9 @@ while t_sim < t:
     max_DT = max(max_DT, dt)
 
     if n_tsteps % config.PRINTOUT == 0:
-        print('[t/s] %8.2e/%8.2e [dt/s] \033[1m%8.2e\033[0m [S] %8d [P] %5d'
+        print('[t] %8.2e/%8.2e [dt] \033[1m%8.2e\033[0m [S] %4d [P] %3d'
               % (t_sim, t, dt, n_tsteps, num_it_P) +
-              ' [C] %5d [T] %5d [CFL] %1d' % (num_it_C, num_it_T, CFL))
+              ' [C] %3d [T] %3d [CFL] %d' % (num_it_C, num_it_T, CFL))
 
     dt = 1e99
     if config.FLUIDFLOW:
