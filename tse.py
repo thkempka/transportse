@@ -408,34 +408,40 @@ def index_list(BC):
 
 @njit(parallel=False, fastmath=numba_fastmath, cache=numba_cache)
 def flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, dt_P):
+    '''
+        Local flow balance error e = I - O - S + WP after Panday et al.
+        (2018), computed for ALL cells including pressure-Dirichlet
+        cells, whose imbalance (water exchanged with the exterior
+        reservoir) would otherwise remain uncorrected in the transport
+        solution and cause concentration overshoot at these cells
+    '''
     e = numpy.zeros((nx, ny, nz))
     for k in prange(nz):
         for j in prange(ny):
             for i in prange(nx):
-                if not BP[i, j, k]:
-                    if i != nx-1:
-                        e[i, j, k] -= (qx[i, j, k] / dx[i]
-                                    * harm(i+1, j, k, i, j, k, rho_f, 0))
-                    if i != 0:
-                        e[i, j, k] += (qx[i-1, j, k] / dx[i]
-                                    * harm(i-1, j, k, i, j, k, rho_f, 0))
-                    if j != ny-1:
-                        e[i, j, k] -= (qy[i, j, k] / dy[j]
-                                    * harm(i, j+1, k, i, j, k, rho_f, 1))
-                    if j != 0:
-                        e[i, j, k] += (qy[i, j-1, k] / dy[j]
-                                    * harm(i, j-1, k, i, j, k, rho_f, 1))
-                    if k != nz-1:
-                        e[i, j, k] -= (qz[i, j, k] / dz[k]
-                                    * harm(i, j, k+1, i, j, k, rho_f, 2))
-                    if k != 0:
-                        e[i, j, k] += (qz[i, j, k-1] / dz[k]
-                                    * harm(i, j, k-1, i, j, k, rho_f, 2))
+                if i != nx-1:
+                    e[i, j, k] -= (qx[i, j, k] / dx[i]
+                                * harm(i+1, j, k, i, j, k, rho_f, 0))
+                if i != 0:
+                    e[i, j, k] += (qx[i-1, j, k] / dx[i]
+                                * harm(i-1, j, k, i, j, k, rho_f, 0))
+                if j != ny-1:
+                    e[i, j, k] -= (qy[i, j, k] / dy[j]
+                                * harm(i, j+1, k, i, j, k, rho_f, 1))
+                if j != 0:
+                    e[i, j, k] += (qy[i, j-1, k] / dy[j]
+                                * harm(i, j-1, k, i, j, k, rho_f, 1))
+                if k != nz-1:
+                    e[i, j, k] -= (qz[i, j, k] / dz[k]
+                                * harm(i, j, k+1, i, j, k, rho_f, 2))
+                if k != 0:
+                    e[i, j, k] += (qz[i, j, k-1] / dz[k]
+                                * harm(i, j, k-1, i, j, k, rho_f, 2))
 
-                    por = phi[i, j, k]
-                    e[i, j, k] += (WP[i, j, k] + ((1 - por)
-                        * c_r[i, j, k] + por * c_f[i, j, k]) 
-                        * (P[i, j, k] - Pn[i, j, k]) * rho_f[i, j, k] / dt_P)
+                por = phi[i, j, k]
+                e[i, j, k] += (WP[i, j, k] + ((1 - por)
+                    * c_r[i, j, k] + por * c_f[i, j, k]) 
+                    * (P[i, j, k] - Pn[i, j, k]) * rho_f[i, j, k] / dt_P)
 
     return e
 
