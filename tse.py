@@ -189,6 +189,7 @@ Msum = numpy.zeros((nx, ny, nz))
 
 # PRESSURE SOLVER SELECTION ###################################################
 PSOLVER = config.PSOLVER if 'PSOLVER' in dir(config) else 'SOR'
+CG_OMEGA = config.CG_OMEGA if 'CG_OMEGA' in dir(config) else 1.0
 C_IMBLFLO = config.C_IMBLFLO if 'C_IMBLFLO' in dir(config) else False
 T_IMBLFLO = config.T_IMBLFLO if 'T_IMBLFLO' in dir(config) else False
 
@@ -978,7 +979,7 @@ def cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP, omega=1.0):
 @njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
 def compute_P_CG(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
                  dt_P, BP, WP, max_it=MAXIT_P, inc_it=1.05, max_dt=dt_max,
-                 min_dt=1e-8, P_conv=1e-10):
+                 min_dt=1e-8, P_conv=1e-10, pcg_omega=1.0):
     '''
         Preconditioned Conjugate Gradient solver for the pressure equation,
         solving the same linear system as the SOR solver:
@@ -1008,7 +1009,8 @@ def compute_P_CG(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
             t_P += dt_P
             dt_P = min(dt_P*inc_it, max_dt)
         else:
-            cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP)
+            cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP,
+                            pcg_omega)
             p[:] = z
             rz = cg_dot(r, z)
             it = 0
@@ -1024,7 +1026,8 @@ def compute_P_CG(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
                 if r_norm / b_norm < P_conv:
                     converged = True
                     break
-                cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP)
+                cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP,
+                                pcg_omega)
                 rz_new = cg_dot(r, z)
                 if abs(rz) < 1e-200:
                     break
@@ -1546,7 +1549,8 @@ while t_sim < t:
                         compute_P_CG(
                             P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
                             Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
-                            max_it=MAXIT_P, P_conv=config.CONV_P)
+                            max_it=MAXIT_P, P_conv=config.CONV_P,
+                            pcg_omega=CG_OMEGA)
                 else:
                     dt, dt_P, P, Pn, converged_P, num_it_P = \
                         compute_P(
