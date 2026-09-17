@@ -12,5 +12,9 @@
 *.npz
 *.log
 *simulations/
+*.py.old
+massbal.csv
+.pi/
+.vscode/
 # uv environment
 .venv/
