@@ -1,0 +1,16 @@
+.gitignore
+*.vts
+*.p
+*.pvd
+*.pvsm
+*__pycache__/
+*cachedir/
+*.swp
+*.odp
+*.odt
+*.png
+*.npz
+*.log
+*simulations/
+# uv environment
+.venv/
