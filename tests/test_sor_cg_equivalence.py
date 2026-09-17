@@ -99,8 +99,14 @@ T = numpy.full((nx, ny, nz), 20.0)
 BP = numpy.zeros((nx, ny, nz))
 BC = numpy.zeros((nx, ny, nz))
 BT = numpy.zeros((nx, ny, nz))
-BP[0, :, :] = 1
+BP[0, :, :] = 1            # lateral boundaries: pressure Dirichlet
 BP[-1, :, :] = 1
+BP[:, 0, :] = 1
+BP[:, -1, :] = 1
+BC[0, :, :] = 1            # lateral boundaries: species Dirichlet (C = 0)
+BC[-1, :, :] = 1
+BC[:, 0, :] = 1
+BC[:, -1, :] = 1
 
 WP = numpy.zeros((nx, ny, nz))
 WT = numpy.zeros((nx, ny, nz))
@@ -109,7 +115,7 @@ wx, wy = nx // 2, ny // 2
 WP[wx, wy, :] = 50 / 3600 / dx[wx] / dy[wy] / dz[0] * rho_f[wx, wy, :]
 BC[wx, wy, :] = 1          # fixed injection concentration at the well
 
-C[:3, :, :, 0] = 1.0       # initial tracer band
+C[:, :, :, 0] = 0.0        # no initial tracer
 C[wx, wy, :, 0] = 1.0      # injection concentration at the well
 
 qx = numpy.zeros((nx, ny, nz))
