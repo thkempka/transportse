@@ -10,7 +10,7 @@ Types of Contributions
 
 ### Report Bugs
 
-Report bugs at <https://gitext.gfz-potsdam.de/kempka/transportse/issues>
+Report bugs at <https://gitext.gfz.de/kempka/transportse/issues>
 
 If you are reporting a bug, please include:
 
@@ -32,7 +32,7 @@ WeTeDe could always use more documentation, whether as part of the official WeTe
 
 ### Submit Feedback
 
-The best way to send feedback is to file an issue at <https://gitext.gfz-potsdam.de/kempka/transportse/issues>.
+The best way to send feedback is to file an issue at <https://gitext.gfz.de/kempka/transportse/issues>.
 
 If you are proposing a feature:
 
