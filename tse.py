@@ -175,6 +175,21 @@ for k in range(nz):
             if (i + j + k) % 2 == 0:
                 GP[i, j, k] = True
 
+# -> PRESSURE SOLVER STENCIL ##################################################
+aE = numpy.zeros((nx, ny, nz))
+aW = numpy.zeros((nx, ny, nz))
+aN = numpy.zeros((nx, ny, nz))
+aS = numpy.zeros((nx, ny, nz))
+aT = numpy.zeros((nx, ny, nz))
+aB = numpy.zeros((nx, ny, nz))
+bgrav = numpy.zeros((nx, ny, nz))
+bdir = numpy.zeros((nx, ny, nz))
+Rbase = numpy.zeros((nx, ny, nz))
+Msum = numpy.zeros((nx, ny, nz))
+
+# PRESSURE SOLVER SELECTION ###################################################
+PSOLVER = config.PSOLVER if 'PSOLVER' in dir(config) else 'SOR'
+
 # CALCULATE INITIAL FLUIDPROPERTIES ###########################################
 def run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
                          phi, Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r):
@@ -640,7 +655,81 @@ def dispersivity(qx, qy, qz, l_l, l_t, B, i, j, k):
 # SOLVER ROUTINES #############################################################
 @njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
       nogil=numba_nogil)
-def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
+def compute_stencil_P(aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
+                      nue, rho_f, phi, c_r, c_f, Kx, Ky, Kz, BP, P):
+    '''
+        Precompute the 7-point pressure stencil once per flow solution.
+        The coefficients depend on rho_f, nue and the Dirichlet values in
+        P, which change between - not within - flow solutions.
+
+        aE..aB   face transmissivities (zero at domain faces and faces
+                 to Dirichlet cells; their contribution is folded into
+                 bdir)
+        bgrav    gravity terms with the signs of the SOR right-hand side
+        bdir     Dirichlet boundary contributions a_face * P_dirichlet
+        Rbase    fluid storage term rho_f * ((1-phi) c_r + phi c_f)
+        Msum     sum of all face transmissivities (diagonal without R)
+    '''
+    for k in prange(nz):
+        for j in prange(ny):
+            for i in prange(nx):
+                aE_ = aW_ = aN_ = aS_ = aT_ = aB_ = 0.0
+                gE = gW = gT = gB = 0.0
+                bdir_ = 0.0
+                if i != nx-1:
+                    aE_ = alpha(i+1, j, k, i, j, k, nue, rho_f, Kx, qx,
+                                dx, i+1, i, 0)
+                    gE = aE_ * beta_g(i+1, j, k, i, j, k, rho_f, 0)
+                    if BP[i+1, j, k]:
+                        bdir_ += aE_ * P[i+1, j, k]
+                if i != 0:
+                    aW_ = alpha(i, j, k, i-1, j, k, nue, rho_f, Kx, qx,
+                                dx, i-1, i, 0)
+                    gW = aW_ * beta_g(i, j, k, i-1, j, k, rho_f, 0)
+                    if BP[i-1, j, k]:
+                        bdir_ += aW_ * P[i-1, j, k]
+                if j != ny-1:
+                    aN_ = alpha(i, j+1, k, i, j, k, nue, rho_f, Ky, qy,
+                                dy, j+1, j, 1)
+                    if BP[i, j+1, k]:
+                        bdir_ += aN_ * P[i, j+1, k]
+                if j != 0:
+                    aS_ = alpha(i, j, k, i, j-1, k, nue, rho_f, Ky, qy,
+                                dy, j-1, j, 1)
+                    if BP[i, j-1, k]:
+                        bdir_ += aS_ * P[i, j-1, k]
+                if k != nz-1:
+                    aT_ = alpha(i, j, k+1, i, j, k, nue, rho_f, Kz, qz,
+                                dz, k+1, k, 2)
+                    gT = aT_ * beta_g(i, j, k+1, i, j, k, rho_f, 2)
+                    if BP[i, j, k+1]:
+                        bdir_ += aT_ * P[i, j, k+1]
+                if k != 0:
+                    aB_ = alpha(i, j, k, i, j, k-1, nue, rho_f, Kz, qz,
+                                dz, k-1, k, 2)
+                    gB = aB_ * beta_g(i, j, k, i, j, k-1, rho_f, 2)
+                    if BP[i, j, k-1]:
+                        bdir_ += aB_ * P[i, j, k-1]
+
+                por = phi[i, j, k]
+                Rbase[i, j, k] = rho_f[i, j, k] * \
+                    ((1-por) * c_r[i, j, k] + por * c_f[i, j, k])
+                Msum[i, j, k] = aE_ + aW_ + aN_ + aS_ + aT_ + aB_
+                bgrav[i, j, k] = gE - gW + gT - gB
+                bdir[i, j, k] = bdir_
+                # faces to Dirichlet cells are excluded from the operator
+                aE[i, j, k] = 0.0 if (i != nx-1 and BP[i+1, j, k]) else aE_
+                aW[i, j, k] = 0.0 if (i != 0 and BP[i-1, j, k]) else aW_
+                aN[i, j, k] = 0.0 if (j != ny-1 and BP[i, j+1, k]) else aN_
+                aS[i, j, k] = 0.0 if (j != 0 and BP[i, j-1, k]) else aS_
+                aT[i, j, k] = 0.0 if (k != nz-1 and BP[i, j, k+1]) else aT_
+                aB[i, j, k] = 0.0 if (k != 0 and BP[i, j, k-1]) else aB_
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def compute_P(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
+              dt_P, BP, WP,
               SOR=1.0, max_it=MAXIT_P, inc_it=1.05, max_dt=dt_max,
               min_dt=1e-8, P_conv=1e-10):
     t_P = 0
@@ -650,43 +739,22 @@ def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
     Pn = P.copy()
 
     def solve(i, j, k):
-        A_ = B_ = C_ = D_ = E_ = G_ = I_ = J_ = K_ = L_ = \
-            Anew = Cnew = Enew = Gnew = Inew = Knew = 0
-
+        R = Rbase[i, j, k] / dt_P
+        s = bgrav[i, j, k] + bdir[i, j, k] + R * Pn[i, j, k] + WP[i, j, k]
         if i != nx-1:
-            A_ = alpha(i+1, j, k, i, j, k, nue, rho_f, Kx, qx, dx, i+1, i, 0)
-            Anew = A_*P[i+1, j, k]
-            B_ = beta_g(i+1, j, k, i, j, k, rho_f, 0)
+            s += aE[i, j, k] * P[i+1, j, k]
         if i != 0:
-            C_ = alpha(i, j, k, i-1, j, k, nue, rho_f, Kx, qx, dx, i-1, i, 0)
-            Cnew = C_*P[i-1, j, k]
-            D_ = beta_g(i, j, k, i-1, j, k, rho_f, 0)
+            s += aW[i, j, k] * P[i-1, j, k]
         if j != ny-1:
-            E_ = alpha(i, j+1, k, i, j, k, nue, rho_f, Ky, qy, dy, j+1, j, 1)
-            Enew = E_*P[i, j+1, k]
-            # F_ = 0
+            s += aN[i, j, k] * P[i, j+1, k]
         if j != 0:
-            G_ = alpha(i, j, k, i, j-1, k, nue, rho_f, Ky, qy, dy, j-1, j, 1)
-            Gnew = G_*P[i, j-1, k]
-            # H_ = 0
+            s += aS[i, j, k] * P[i, j-1, k]
         if k != nz-1:
-            I_ = alpha(i, j, k+1, i, j, k, nue, rho_f, Kz, qz, dz, k+1, k, 2)
-            Inew = I_*P[i, j, k+1]
-            J_ = beta_g(i, j, k+1, i, j, k, rho_f, 2)
+            s += aT[i, j, k] * P[i, j, k+1]
         if k != 0:
-            K_ = alpha(i, j, k, i, j, k-1, nue, rho_f, Kz, qz, dz, k-1, k, 2)
-            Knew = K_*P[i, j, k-1]
-            L_ = beta_g(i, j, k, i, j, k-1, rho_f, 2)
+            s += aB[i, j, k] * P[i, j, k-1]
 
-        por = phi[i, j, k]
-        R = (rho_f[i, j, k] * ((1-por) * c_r[i, j, k] + por * c_f[i, j, k])
-             / dt_P)
-        M = A_ + C_ + E_ + G_ + I_ + K_
-
-        P[i, j, k] = (1-SOR) * P[i, j, k] + SOR * (
-            Anew + A_*B_ + Cnew - C_*D_ + Enew
-            + Gnew + Inew + I_*J_ + Knew - K_*L_
-            + R * Pn[i, j, k] + WP[i, j, k]) / (R + M)
+        P[i, j, k] = (1-SOR) * P[i, j, k] + SOR * s / (R + Msum[i, j, k])
 
         return P[i, j, k]
 
@@ -723,7 +791,6 @@ def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
                 dt_P = min(dt_P*inc_it, max_dt)
         else:
             converged = False
-            # if num_sub_it >= max_it or (diff >= 1 and num_sub_it > 1):
             if num_sub_it >= max_it:
                 print(' t:', t_P, 'P [', num_it, ']: Reducing dt:', dt_P,
                       '=>', dt_P/2, '(s) L2:', diff)
@@ -732,6 +799,231 @@ def compute_P(P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt_P, BP, WP,
                 P = Pn.copy()  # reset P
             if dt_P <= min_dt:
                 break
+
+    return t_P, dt_P, P, Pn, converged, num_it
+
+
+# CONJUGATE GRADIENT SOLVER ####################################################
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def cg_matvec(x, Ax, aE, aW, aN, aS, aT, aB, diag):
+    '''
+        Ax = diag * x - sum(a_face * x_neighbour), flattened prange for
+        parallel execution independent of the grid aspect ratio
+    '''
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        s = diag[i, j, k] * x[i, j, k]
+        if i != nx-1:
+            s -= aE[i, j, k] * x[i+1, j, k]
+        if i != 0:
+            s -= aW[i, j, k] * x[i-1, j, k]
+        if j != ny-1:
+            s -= aN[i, j, k] * x[i, j+1, k]
+        if j != 0:
+            s -= aS[i, j, k] * x[i, j-1, k]
+        if k != nz-1:
+            s -= aT[i, j, k] * x[i, j, k+1]
+        if k != 0:
+            s -= aB[i, j, k] * x[i, j, k-1]
+        Ax[i, j, k] = s
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def cg_dot(a, b):
+    '''
+        Parallel dot product (prange reduction)
+    '''
+    s = 0.0
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        s += a[i, j, k] * b[i, j, k]
+    return s
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def cg_assemble(diag, b, Rbase, Msum, bgrav, bdir, Pn, WP, dt_P):
+    '''
+        Diagonal and right-hand side for the current time step size
+    '''
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        R = Rbase[i, j, k] / dt_P
+        diag[i, j, k] = R + Msum[i, j, k]
+        b[i, j, k] = (bgrav[i, j, k] + bdir[i, j, k]
+                      + R * Pn[i, j, k] + WP[i, j, k])
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def cg_residual(r, b, Ax, BP):
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        if BP[i, j, k]:
+            r[i, j, k] = 0.0
+        else:
+            r[i, j, k] = b[i, j, k] - Ax[i, j, k]
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def cg_update(P, r, p, Ap, alpha, BP):
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        if not BP[i, j, k]:
+            P[i, j, k] += alpha * p[i, j, k]
+            r[i, j, k] -= alpha * Ap[i, j, k]
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def cg_update_p(p, z, beta, BP):
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        if BP[i, j, k]:
+            p[i, j, k] = 0.0
+        else:
+            p[i, j, k] = z[i, j, k] + beta * p[i, j, k]
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def gs_sweep(z, r, aE, aW, aN, aS, aT, aB, diag, color, BP, omega):
+    '''
+        One colour sweep of a red-black Gauss-Seidel solve of A z = r
+        (used as CG preconditioner; cells of equal colour are independent)
+    '''
+    n = nx * ny * nz
+    nxy = nx * ny
+    for ii in prange(n):
+        k = ii // nxy
+        j = (ii // nx) % ny
+        i = ii % nx
+        if not BP[i, j, k] and (i + j + k) % 2 == color:
+            s = r[i, j, k]
+            if i != nx-1:
+                s += aE[i, j, k] * z[i+1, j, k]
+            if i != 0:
+                s += aW[i, j, k] * z[i-1, j, k]
+            if j != ny-1:
+                s += aN[i, j, k] * z[i, j+1, k]
+            if j != 0:
+                s += aS[i, j, k] * z[i, j-1, k]
+            if k != nz-1:
+                s += aT[i, j, k] * z[i, j, k+1]
+            if k != 0:
+                s += aB[i, j, k] * z[i, j, k-1]
+            z[i, j, k] = (1-omega) * z[i, j, k] + omega * s / diag[i, j, k]
+
+
+@njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
+def cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP, omega=1.0):
+    '''
+        Symmetric Gauss-Seidel preconditioner (black-red-red-black);
+        the symmetrisation is required for the standard PCG algorithm
+    '''
+    z[:] = 0.0
+    gs_sweep(z, r, aE, aW, aN, aS, aT, aB, diag, 0, BP, omega)
+    gs_sweep(z, r, aE, aW, aN, aS, aT, aB, diag, 1, BP, omega)
+    gs_sweep(z, r, aE, aW, aN, aS, aT, aB, diag, 1, BP, omega)
+    gs_sweep(z, r, aE, aW, aN, aS, aT, aB, diag, 0, BP, omega)
+
+
+@njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
+def compute_P_CG(P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase, Msum,
+                 dt_P, BP, WP, max_it=MAXIT_P, inc_it=1.05, max_dt=dt_max,
+                 min_dt=1e-8, P_conv=1e-10):
+    '''
+        Preconditioned Conjugate Gradient solver for the pressure equation,
+        solving the same linear system as the SOR solver:
+        (R + M) P - sum(a_face P_neighbour) = bgrav + bdir + R Pn + WP
+    '''
+    t_P = 0
+    converged = False
+    num_it = 0
+    Pn = P.copy()
+    diag = numpy.zeros((nx, ny, nz))
+    b = numpy.zeros((nx, ny, nz))
+    r = numpy.zeros((nx, ny, nz))
+    z = numpy.zeros((nx, ny, nz))
+    p = numpy.zeros((nx, ny, nz))
+    Ax = numpy.zeros((nx, ny, nz))
+    Ap = numpy.zeros((nx, ny, nz))
+
+    while not converged:
+        # assemble operator diagonal and right-hand side for current dt_P
+        cg_assemble(diag, b, Rbase, Msum, bgrav, bdir, Pn, WP, dt_P)
+        cg_matvec(P, Ax, aE, aW, aN, aS, aT, aB, diag)
+        cg_residual(r, b, Ax, BP)
+        b_norm = numpy.sqrt(cg_dot(r, r))
+
+        if b_norm < 1e-200:
+            converged = True
+            t_P += dt_P
+            dt_P = min(dt_P*inc_it, max_dt)
+        else:
+            cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP)
+            p[:] = z
+            rz = cg_dot(r, z)
+            it = 0
+            while it < max_it:
+                it += 1
+                cg_matvec(p, Ap, aE, aW, aN, aS, aT, aB, diag)
+                pAp = cg_dot(p, Ap)
+                if abs(pAp) < 1e-200:
+                    break
+                alpha_cg = rz / pAp
+                cg_update(P, r, p, Ap, alpha_cg, BP)
+                r_norm = numpy.sqrt(cg_dot(r, r))
+                if r_norm / b_norm < P_conv:
+                    converged = True
+                    break
+                cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP)
+                rz_new = cg_dot(r, z)
+                if abs(rz) < 1e-200:
+                    break
+                beta_cg = rz_new / rz
+                cg_update_p(p, z, beta_cg, BP)
+                rz = rz_new
+
+            num_it = it
+            if converged:
+                t_P += dt_P
+                if it < max_it/2:
+                    dt_P = min(dt_P*inc_it, max_dt)
+            else:
+                print(' t:', t_P, 'P [CG', it, ']: Reducing dt:', dt_P,
+                      '=>', dt_P/2, '(s)')
+                dt_P = dt_P/2
+                P = Pn.copy()
+                if dt_P <= min_dt:
+                    break
 
     return t_P, dt_P, P, Pn, converged, num_it
 
@@ -1157,6 +1449,8 @@ print_row('WEIGHTING', 'OMEGA_C %g | OMEGA_T %g'
           % (config.OMEGA_C, config.OMEGA_T))
 print_row('CONVERGENCE', 'P %.1e | C %.1e | T %.1e'
           % (config.CONV_P, config.CONV_C, config.CONV_T))
+print_row('PRESSURE', PSOLVER + ' solver | SOR_P %.4f'
+          % config.SOR_P)
 print_row('PARALLEL', '%d thread(s) | numba threading layer %s'
           % (config.parallel_processes, config.numba_tl))
 if config.CHEMREACT:
@@ -1203,11 +1497,24 @@ while t_sim < t:
         num_it_P = 0
         if config.FLUIDFLOW:
             while not Co_Filled:
-                dt, dt_P, P, Pn, converged_P, num_it_P = \
-                    compute_P(
-                        P, c_f, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz, dt, BP,
-                        WP, max_dt=dt_max, inc_it=1.25, SOR=config.SOR_P,
-                        max_it=MAXIT_P, P_conv=config.CONV_P)
+                # build the pressure stencil (coefficients depend on rho_f,
+                # nue and the Dirichlet values in P; rebuilt per flow solve)
+                compute_stencil_P(aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
+                                  Msum, nue, rho_f, phi, c_r, c_f, Kx, Ky, Kz,
+                                  BP, P)
+                if PSOLVER == 'CG':
+                    dt, dt_P, P, Pn, converged_P, num_it_P = \
+                        compute_P_CG(
+                            P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
+                            Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
+                            max_it=MAXIT_P, P_conv=config.CONV_P)
+                else:
+                    dt, dt_P, P, Pn, converged_P, num_it_P = \
+                        compute_P(
+                            P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
+                            Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
+                            SOR=config.SOR_P, max_it=MAXIT_P,
+                            P_conv=config.CONV_P)
 
                 if not converged_P:
                     sys.exit('* P CONVERGENCE ERROR ' +

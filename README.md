@@ -18,6 +18,9 @@ conductive and convective transport of heat.
 - Finite-difference discretisation of density-driven (variable-density)
   Darcy flow in 3-D on structured grids with variable node spacing
   (nx, ny, nz)
+- Pressure solver: red-black SOR (default) or preconditioned Conjugate
+  Gradient (`PSOLVER = "CG"` in the config file), both based on a
+  precomputed 7-point stencil
 - Gravity effects and sloped models (model slope angle beta)
 - Red-black successive over-relaxation (SOR) pressure solver
 - Fluid storage (compressibility of fluid and rock) and source/sink terms
