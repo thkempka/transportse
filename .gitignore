@@ -18,5 +18,7 @@ massbal.csv
 .vscode/
 A?ENTS.md
 attic/
+benchmarks/
+benchmark_logs/
 # uv environment
 .venv/
