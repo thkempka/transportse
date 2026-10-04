@@ -193,6 +193,85 @@ CG_OMEGA = config.CG_OMEGA if 'CG_OMEGA' in dir(config) else 1.0
 C_IMBLFLO = config.C_IMBLFLO if 'C_IMBLFLO' in dir(config) else False
 T_IMBLFLO = config.T_IMBLFLO if 'T_IMBLFLO' in dir(config) else False
 
+# -> UNSATURATED FLOW (RICHARDS EQUATION) #####################################
+# All parameters are per-cell numpy arrays of model size (nx, ny, nz), so
+# that each cell can have individual hydraulic properties (lithology).
+UNSATURAT = config.UNSATURAT if 'UNSATURAT' in dir(config) else False
+DEBUG_INNER = False
+
+if UNSATURAT:
+    # van Genuchten (1980) / Haverkamp et al. (1977) parameters per cell
+    alpha_vg = config.alpha_vg   # vG: alpha (1/m) | Haverkamp: alpha (m^beta)
+    n_vg = config.n_vg           # vG: n (-)     | Haverkamp: beta (-)
+    S_r = config.S_r             # residual saturation (-)
+    S_s = config.S_s if 'S_s' in dir(config) else numpy.ones((nx, ny, nz))
+    KRMODEL = config.KRMODEL if 'KRMODEL' in dir(config) else 'mualem-vg'
+    krm = 0 if KRMODEL == 'mualem-vg' else 1
+
+    for pname, parr in (('alpha_vg', alpha_vg), ('n_vg', n_vg),
+                        ('S_r', S_r), ('S_s', S_s)):
+        if numpy.shape(parr) != (nx, ny, nz):
+            sys.exit('* %s must be a numpy array of model size (nx, ny, nz)'
+                     % pname)
+    if KRMODEL not in ('mualem-vg', 'haverkamp'):
+        sys.exit('* KRMODEL must be "mualem-vg" or "haverkamp"')
+    if numpy.min(alpha_vg) <= 0 or numpy.min(n_vg) <= 1:
+        sys.exit('* alpha_vg must be > 0 and n_vg must be > 1')
+
+    if krm == 1:
+        # Haverkamp conductivity parameters A (m^gamma) and gamma (-)
+        A_vg = config.A_vg
+        gamma_vg = config.gamma_vg
+        for pname, parr in (('A_vg', A_vg), ('gamma_vg', gamma_vg)):
+            if numpy.shape(parr) != (nx, ny, nz):
+                sys.exit('* %s must be a numpy array of model size '
+                         '(nx, ny, nz)' % pname)
+    else:
+        A_vg = ZEROS
+        gamma_vg = ZEROS
+
+    # initial saturation from the retention curve applied to the initial
+    # pressure field (P < 0: capillary pressure head h = -P/(rho_f*g));
+    # the initial saturation is therefore always consistent with the
+    # initial pressure field (hydrostatic equilibrium initial conditions
+    # yield the corresponding equilibrium saturation profile)
+    h_ = numpy.where(P >= 0.0, 0.0, -P / (rho_f * g))
+    if krm == 0:
+        m_ = 1.0 - 1.0 / n_vg
+        Se_ = (1.0 + (alpha_vg * h_)**n_vg)**(-m_)
+    else:
+        Se_ = alpha_vg / (alpha_vg + h_**n_vg)
+    S = numpy.where(P >= 0.0, S_s, S_r + (S_s - S_r) * Se_)
+    Sn = S.copy()                # saturation at the previous time level
+
+    # initial relative permeability (mualem-vg: from Se; haverkamp: from h)
+    if krm == 0:
+        kr = numpy.sqrt(Se_) * (1.0 - (1.0 - Se_**(1.0 / m_))**m_)**2
+    else:
+        kr = A_vg / (A_vg + h_**gamma_vg)
+    kr = numpy.where(P >= 0.0, 1.0, kr)
+
+    # capillary capacity dS/dP (1/Pa) and upwinded face relative
+    # permeabilities (updated per Picard iteration in the main loop)
+    dSdP = numpy.zeros((nx, ny, nz))          # capillary capacity (1/Pa)
+    krE = numpy.zeros((nx, ny, nz))           # face kr, +x direction (-)
+    krW = numpy.zeros((nx, ny, nz))           # face kr, -x direction (-)
+    krN = numpy.zeros((nx, ny, nz))           # face kr, +y direction (-)
+    krS = numpy.zeros((nx, ny, nz))           # face kr, -y direction (-)
+    krT = numpy.zeros((nx, ny, nz))           # face kr, +z direction (-)
+    krB = numpy.zeros((nx, ny, nz))           # face kr, -z direction (-)
+
+    # modified Picard convergence criterion (saturation L2 norm, -)
+    CONV_S = config.CONV_S if 'CONV_S' in dir(config) else 1e-6
+else:
+    # saturated flow: S and kr are unity (no effect on the solvers)
+    S = ONES
+    Sn = ONES
+    kr = ONES
+    A_vg = ZEROS
+    gamma_vg = ZEROS
+    krm = 0
+
 # CALCULATE INITIAL FLUIDPROPERTIES ###########################################
 def run_fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r,
                          phi, Kx, Ky, Kz, D_fx, D_fy, D_fz, rho_r):
@@ -327,6 +406,135 @@ def harm(i1, j1, k1, i2, j2, k2, H, n):
     else:
         return 0
 
+# UNSATURATED FLOW CONSTITUTIVE RELATIONS #####################################
+@njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
+def sat_kr_point(P_, rho, a_, n_, Sr_, Ss_, A_, g_, krm):
+    '''
+        Saturation and relative permeability at a single node.
+        P_ gauge pressure (Pa); P_ < 0: capillary pressure head
+        h = -P_/(rho*g) (m).
+        krm 0: van Genuchten (1980) retention with Mualem (1976) conductivity
+            Se = (1 + (a_*h)^n)^(-(1-1/n))
+            S  = Sr + (Ss-Sr)*Se
+            kr = Se^0.5 * (1 - (1-Se^(1/m))^m)^2
+        krm 1: Haverkamp et al. (1977) retention and conductivity
+            Se = a_/(a_ + h^n)          (a_ in m^beta, n = beta)
+            kr = A_/(A_ + h^g_)         (A_ in m^gamma)
+    '''
+    if P_ >= 0.0:
+        return Ss_, 1.0
+    h = -P_ / (rho * g)
+    if krm == 0:
+        m_ = 1.0 - 1.0 / n_
+        Se = (1.0 + (a_ * h)**n_)**(-m_)
+        S_ = Sr_ + (Ss_ - Sr_) * Se
+        kr_ = numpy.sqrt(Se) * (1.0 - (1.0 - Se**(1.0 / m_))**m_)**2
+    else:
+        Se = a_ / (a_ + h**n_)
+        S_ = Sr_ + (Ss_ - Sr_) * Se
+        kr_ = A_ / (A_ + h**g_)
+    return S_, kr_
+
+
+@njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
+def dsdp_point(P_, rho, a_, n_, Sr_, Ss_, krm):
+    '''
+        Capillary capacity dS/dP (1/Pa) at a single node, required for the
+        modified Picard linearisation of the mixed-form storage term
+        (Celia et al. 1990). Zero for P_ >= 0 (saturated).
+    '''
+    if P_ >= 0.0:
+        return 0.0
+    h = -P_ / (rho * g)
+    if krm == 0:
+        m_ = 1.0 - 1.0 / n_
+        x = (a_ * h)**n_
+        # dSe/dh = -m*n*a^n*h^(n-1)*(1+(a*h)^n)^(-m-1)
+        dSe_dh = -m_ * n_ * a_**n_ * h**(n_ - 1.0) * (1.0 + x)**(-m_ - 1.0)
+    else:
+        # Se = a/(a+h^n): dSe/dh = -a*n*h^(n-1)/(a+h^n)^2
+        dSe_dh = -a_ * n_ * h**(n_ - 1.0) / (a_ + h**n_)**2
+    # chain rule: dSe/dP = dSe/dh * dh/dP with h = -P/(rho*g)
+    return (Ss_ - Sr_) * (-dSe_dh) / (rho * g)
+
+
+@njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
+def harm2(a, b):
+    'harmonic mean of two scalars (0 if either is 0)'
+    if a != 0 and b != 0:
+        return 2.0 * a * b / (a + b)
+    return 0.0
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT, krB, rho_f,
+                      Kx, Ky, Kz, alpha_vg, n_vg, S_r, S_s, A_vg, gamma_vg,
+                      krm):
+    '''
+        Modified Picard update: saturation S(P), capillary capacity
+        dS/dP(P), cell and face relative permeabilities from the current
+        pressure iterate (all nodes, including pressure-Dirichlet nodes).
+        The face kr values are the ratio of the harmonic mean of the cell
+        conductivities K*kr to the harmonic mean of K, so that the face
+        conductance alpha()*kr equals the harmonic mean of K*kr (series
+        resistance, consistent with the saturated-flow discretisation;
+        reduces exactly to kr = 1 for saturated cells). The face kr values
+        are frozen for the subsequent linear solve, which keeps the inner
+        solver linear.
+    '''
+    # cell values first (race-free: face pass reads cell kr)
+    for k in prange(nz):
+        for j in prange(ny):
+            for i in prange(nx):
+                S[i, j, k], kr[i, j, k] = sat_kr_point(
+                    P[i, j, k], rho_f[i, j, k], alpha_vg[i, j, k],
+                    n_vg[i, j, k], S_r[i, j, k], S_s[i, j, k],
+                    A_vg[i, j, k], gamma_vg[i, j, k], krm)
+                dSdP[i, j, k] = dsdp_point(
+                    P[i, j, k], rho_f[i, j, k], alpha_vg[i, j, k],
+                    n_vg[i, j, k], S_r[i, j, k], S_s[i, j, k], krm)
+    # face relative permeabilities: upstream weighting with respect to the
+    # pressure head (the wetter cell's kr). The harmonic mean blocks
+    # imbibition fronts (the dry side's kr ~ 0 at S ~ S_r), while the
+    # upstream rule is the standard treatment for Richards wetting fronts
+    # (Vauclin's FE, HYDRUS, MODFLOW-SURFACT). For saturated cells (kr = 1
+    # on both sides) this reduces exactly to kr = 1.
+    for k in prange(nz):
+        for j in prange(ny):
+            for i in prange(nx):
+                if i != nx-1:
+                    krE[i, j, k] = kr[i, j, k] \
+                        if P[i, j, k] >= P[i+1, j, k] else kr[i+1, j, k]
+                else:
+                    krE[i, j, k] = 0.0
+                if i != 0:
+                    krW[i, j, k] = kr[i, j, k] \
+                        if P[i, j, k] >= P[i-1, j, k] else kr[i-1, j, k]
+                else:
+                    krW[i, j, k] = 0.0
+                if j != ny-1:
+                    krN[i, j, k] = kr[i, j, k] \
+                        if P[i, j, k] >= P[i, j+1, k] else kr[i, j+1, k]
+                else:
+                    krN[i, j, k] = 0.0
+                if j != 0:
+                    krS[i, j, k] = kr[i, j, k] \
+                        if P[i, j, k] >= P[i, j-1, k] else kr[i, j-1, k]
+                else:
+                    krS[i, j, k] = 0.0
+                if k != nz-1:
+                    krT[i, j, k] = kr[i, j, k] \
+                        if P[i, j, k] >= P[i, j, k+1] else kr[i, j, k+1]
+                else:
+                    krT[i, j, k] = 0.0
+                if k != 0:
+                    krB[i, j, k] = kr[i, j, k] \
+                        if P[i, j, k] >= P[i, j, k-1] else kr[i, j, k-1]
+                else:
+                    krB[i, j, k] = 0.0
+
+
 def plotresults():
     # write results into pickle file at selected time steps
     global PLOTINDEX, dt, dt_prev
@@ -341,7 +549,8 @@ def plotresults():
                   as pfile:
                     dump((lx, ly, lz, nx, ny, nz, dx, dy, dz, t_sim, dt,
                           P, C, T, qx, qy, qz, phi, Kx, Ky, Kz, rho_f,
-                          nue, cp_f, l_f, BP, BC, BT, L, mass, WP, WT, WC, e),
+                          nue, cp_f, l_f, BP, BC, BT, L, mass, WP, WT, WC, e,
+                          S),
                          pfile, compress=3)
                 dt = dt_prev
                 PLOTINDEX += 1
@@ -425,13 +634,17 @@ def index_list(BC):
     return chem_list
 
 @njit(parallel=False, fastmath=numba_fastmath, cache=numba_cache)
-def flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, dt_P):
+def flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, dt_P, S, Sn,
+               unsat):
     '''
         Local flow balance error e = I - O - S + WP after Panday et al.
         (2018), computed for ALL cells including pressure-Dirichlet
         cells, whose imbalance (water exchanged with the exterior
         reservoir) would otherwise remain uncorrected in the transport
-        solution and cause concentration overshoot at these cells
+        solution and cause concentration overshoot at these cells.
+        For the Richards solution (unsat=True) the storage term is the
+        mixed-form derivative of the water mass phi*S*rho:
+            Sn*c_t*(P-Pn)*rho/dt + phi*(S-Sn)*rho/dt
     '''
     e = numpy.zeros((nx, ny, nz))
     for k in prange(nz):
@@ -457,9 +670,17 @@ def flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, dt_P):
                                 * harm(i, j, k-1, i, j, k, rho_f, 2))
 
                 por = phi[i, j, k]
-                e[i, j, k] += (WP[i, j, k] + ((1 - por)
-                    * c_r[i, j, k] + por * c_f[i, j, k]) 
-                    * (P[i, j, k] - Pn[i, j, k]) * rho_f[i, j, k] / dt_P)
+                if unsat:
+                    e[i, j, k] += (WP[i, j, k]
+                        + Sn[i, j, k] * ((1 - por) * c_r[i, j, k]
+                        + por * c_f[i, j, k]) * (P[i, j, k] - Pn[i, j, k])
+                        * rho_f[i, j, k] / dt_P
+                        + por * (S[i, j, k] - Sn[i, j, k])
+                        * rho_f[i, j, k] / dt_P)
+                else:
+                    e[i, j, k] += (WP[i, j, k] + ((1 - por)
+                        * c_r[i, j, k] + por * c_f[i, j, k]) 
+                        * (P[i, j, k] - Pn[i, j, k]) * rho_f[i, j, k] / dt_P)
 
     return e
 
@@ -1103,9 +1324,458 @@ def compute_q(P, BP, Kx, Ky, Kz, qx, qy, qz, nue, rho_f):
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
       nogil=numba_nogil)
-def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
-              e, omega=1, SOR=1.0, max_it=MAXIT_C, inc_it=1.05, max_dt=dt_max,
-              min_dt=1e-8, C_conv=1e-10):
+def compute_q_RICH(P, BP, Kx, Ky, Kz, qx, qy, qz, nue, rho_f,
+                   krE, krW, krN, krS, krT, krB):
+    '''
+        Darcy fluxes for the Richards solution: identical to compute_q,
+        but each face flux is multiplied by the frozen upwinded face
+        relative permeability (consistent with the transmissibilities
+        used in compute_P_RICH)
+    '''
+    for k in prange(nz):  # iteration only for interfaces between grid points
+        for j in prange(ny):
+            for i in prange(nx):
+                if i < nx - 1:
+                    if not (BP[i, j, k] and BP[i+1, j, k]):
+                        qx[i, j, k] = krE[i, j, k] * \
+                            (- harm(i+1, j, k, i, j, k, Kx, 0) /
+                             harm(i+1, j, k, i, j, k, nue, 0)
+                             * ((P[i+1, j, k] - P[i, j, k]) /
+                             (0.5 * (dx[i+1] + dx[i]))
+                             + amean(i+1, j, k, i, j, k, rho_f, 0) *
+                             g * numpy.sin(beta)))
+                    else:
+                        qx[i, j, k] = 0
+                if j < ny - 1:
+                    if not (BP[i, j, k] and BP[i, j+1, k]):
+                        qy[i, j, k] = krN[i, j, k] * \
+                            (- harm(i, j+1, k, i, j, k, Ky, 1) /
+                             harm(i, j+1, k, i, j, k, nue, 1)
+                             * (P[i, j+1, k] - P[i, j, k]) /
+                             (0.5 * (dy[j+1] + dy[j])))
+                    else:
+                        qy[i, j, k] = 0
+                if k < nz - 1:
+                    if not (BP[i, j, k] and BP[i, j, k+1]):
+                        qz[i, j, k] = krT[i, j, k] * \
+                            (- harm(i, j, k+1, i, j, k, Kz, 2) /
+                             harm(i, j, k+1, i, j, k, nue, 2)
+                             * ((P[i, j, k+1]-P[i, j, k]) /
+                             (0.5 * (dz[k+1] + dz[k]))
+                             + amean(i, j, k+1, i, j, k, rho_f, 2)
+                             * g * numpy.cos(beta)))
+                    else:
+                        qz[i, j, k] = 0
+    return qx, qy, qz
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def compute_P_RICH(P, Pn, S, Sn, kr, krE, krW, krN, krS, krT, krB, dSdP,
+                   c_f, c_r, nue, rho_f, phi, Kx, Ky, Kz, qx, qy, qz,
+                   dt_P, BP, WP, alpha_vg, n_vg, S_r, S_s, A_vg, gamma_vg,
+                   krm, conv_s, max_dt,
+                   SOR=1.0, max_it=MAXIT_P, P_conv=1e-10):
+    '''
+        Modified-Picard solution of the mixed-form Richards equation
+        (Celia et al. 1990), same solver pattern as compute_P:
+
+            phi*rho*(S - Sn)/dt + Sn*rho*c_t*(P - Pn)/dt
+            = div(rho * kr * K/mue * (grad P + rho*g*grad z)) + WP
+
+        OUTER loop: modified Picard iteration on the saturation. The
+        storage accumulation is linearised around the current iterate,
+
+            phi*rho/dt * [S^m + dS/dP|(P^m) * (P^(m+1) - P^m) - Sn]
+
+        and all coefficients (S^m, dS/dP, face kr) are frozen, so each
+        pass solves a LINEAR system. After each converged inner solve the
+        saturation, capacity and face kr are updated from the new
+        pressure; convergence on the saturation L2 norm (conv_s). At
+        Picard convergence the linearisation error vanishes and the
+        discretised equation is the exact mass-conservative mixed form.
+
+        INNER loop: red-black SOR solve of the linearised equation with
+        frozen coefficients (same as compute_P).
+
+        Non-convergence of either loop halves dt_P and restarts the time
+        step from Pn/Sn (same pattern as compute_P); on convergence dt_P
+        is increased by 1.25 for the next time step.
+
+        P   pressure iterate (initial guess and linearisation point)
+        Pn  pressure at the previous TIME LEVEL (storage reference)
+        S   saturation at the linearisation point, S^m = S(P^m)
+        Sn  saturation at the previous time level
+        dSdP, krE..krB  frozen capacity and face relative permeabilities
+        P is gauge pressure; P < 0: capillary pressure
+        (head h = -P/(rho*g)); P >= 0: saturated (S = S_s, kr = 1)
+    '''
+    t_P = 0
+    converged = False
+    num_it = 0        # Picard passes of the accepted step (reporting)
+    num_sub_it = 0    # Picard passes since the last dt reduction
+
+    # frozen linearisation arrays (refilled in place per Picard pass;
+    # preallocated here so that the solve closure only captures
+    # once-assigned variables, as required by numba)
+    bS = numpy.empty_like(phi)      # constant storage RHS term
+    coef_C = numpy.empty_like(phi)  # capacity storage coefficient
+    coef_P = numpy.empty_like(phi)  # compressible storage coefficient
+
+    def solve(i, j, k):
+        A_ = B_ = C_ = D_ = E_ = G_ = I_ = J_ = K_ = L_ = \
+            Anew = Cnew = Enew = Gnew = Inew = Knew = 0
+
+        if i != nx-1:
+            A_ = alpha(i+1, j, k, i, j, k, nue, rho_f, Kx, qx, dx, i+1, i, 0) \
+                * krE[i, j, k]
+            Anew = A_*P[i+1, j, k]
+            B_ = beta_g(i+1, j, k, i, j, k, rho_f, 0)
+        if i != 0:
+            C_ = alpha(i, j, k, i-1, j, k, nue, rho_f, Kx, qx, dx, i-1, i, 0) \
+                * krW[i, j, k]
+            Cnew = C_*P[i-1, j, k]
+            D_ = beta_g(i, j, k, i-1, j, k, rho_f, 0)
+        if j != ny-1:
+            E_ = alpha(i, j+1, k, i, j, k, nue, rho_f, Ky, qy, dy, j+1, j, 1) \
+                * krN[i, j, k]
+            Enew = E_*P[i, j+1, k]
+        if j != 0:
+            G_ = alpha(i, j, k, i, j-1, k, nue, rho_f, Ky, qy, dy, j-1, j, 1) \
+                * krS[i, j, k]
+            Gnew = G_*P[i, j-1, k]
+        if k != nz-1:
+            I_ = alpha(i, j, k+1, i, j, k, nue, rho_f, Kz, qz, dz, k+1, k, 2) \
+                * krT[i, j, k]
+            Inew = I_*P[i, j, k+1]
+            J_ = beta_g(i, j, k+1, i, j, k, rho_f, 2)
+        if k != 0:
+            K_ = alpha(i, j, k, i, j, k-1, nue, rho_f, Kz, qz, dz, k-1, k, 2) \
+                * krB[i, j, k]
+            Knew = K_*P[i, j, k-1]
+            L_ = beta_g(i, j, k, i, j, k-1, rho_f, 2)
+
+        M = A_ + C_ + E_ + G_ + I_ + K_
+
+        P[i, j, k] = (1-SOR) * P[i, j, k] + SOR * (
+            Anew + A_*B_ + Cnew - C_*D_ + Enew
+            + Gnew + Inew + I_*J_ + Knew - K_*L_
+            + bS[i, j, k] + coef_P[i, j, k] * Pn[i, j, k]
+            + WP[i, j, k]) / (coef_C[i, j, k] + coef_P[i, j, k] + M)
+
+        return P[i, j, k]
+
+    while not converged:
+        # frozen linearisation coefficients (modified Picard, Celia 1990)
+        # bS uses the pressure linearisation point P^m (frozen), while the
+        # stencil neighbour values use the live SOR iterate
+        coef_S = phi * rho_f / dt_P
+        bS[:] = coef_S * (Sn - S + dSdP * P)
+        coef_C[:] = coef_S * dSdP
+        coef_P[:] = Sn * rho_f * ((1 - phi) * c_r + phi * c_f) / dt_P
+
+        # ---- inner red-black SOR solve with frozen coefficients ----
+        num_sub_it += 1
+        inner_conv = False
+        inner_it = 0
+        diff = 1e100
+        while not inner_conv:
+            inner_it += 1
+            Pold = P.copy()
+
+            # implementation of black-red stencil scheme for SOR
+            for k in prange(nz):
+                for j in prange(ny):
+                    for i in prange(nx):
+                        if GP[i, j, k]:
+                            if not BP[i, j, k]:
+                                P[i, j, k] = solve(i, j, k)
+            for k in prange(nz):
+                for j in prange(ny):
+                    for i in prange(nx):
+                        if not GP[i, j, k]:
+                            if not BP[i, j, k]:
+                                P[i, j, k] = solve(i, j, k)
+
+            if inner_it < 50:
+                diff = l2_norm(P, Pold, 'P')
+            elif inner_it % 10 == 0:  # l2 norm after each 10 iterations
+                diff = l2_norm(P, Pold, 'P')
+            if DEBUG_INNER and inner_it % 2000 == 0:
+                print('   [inner it', inner_it, '] L2', diff)
+            if diff < P_conv:
+                inner_conv = True
+            elif inner_it >= max_it:
+                break
+
+
+        if not inner_conv:
+            # inner solver did not reach the change criterion within max_it
+            # sweeps (the saturated zone with c_t ~ 0 is nearly elliptic and
+            # the SOR tail decays very slowly). Accept the current iterate:
+            # the remaining change per sweep bounds the solution error,
+            # which is far below the accuracy of the outer Picard loop.
+            # Only a DIVERGED iterate (L2 >= 1 or NaN) is rejected.
+            if not (diff < 1.0) or numpy.isnan(diff):
+                print(' t:', t_P, 'P [', inner_it, ']: Diverged, reducing dt:',
+                      dt_P, '=>', dt_P/2, '(s) L2:', diff)
+                dt_P = dt_P/2
+                num_sub_it = 0
+                P = Pn.copy()
+                S = Sn.copy()
+                update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT,
+                                  krB, rho_f, Kx, Ky, Kz, alpha_vg, n_vg,
+                                  S_r, S_s, A_vg, gamma_vg, krm)
+                if dt_P <= 1e-8:
+                    break
+                continue
+
+        # ---- Picard update: saturation, capacity, face kr ----
+        Sold = S.copy()
+        update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT, krB,
+                          rho_f, Kx, Ky, Kz, alpha_vg, n_vg, S_r, S_s,
+                          A_vg, gamma_vg, krm)
+        num_it += 1
+        pic_diff = l2_norm(S, Sold, 'S')
+        if pic_diff < conv_s:
+            converged = True
+            t_P += dt_P
+            # Increase time step by factor 1.25 for the next time step
+            if num_sub_it < max_it/2:
+                dt_P = min(dt_P*1.25, max_dt)
+        elif num_sub_it >= 10:
+            # Picard iteration stagnates: reduce dt, restart the step
+            print(' t:', t_P, 'PICARD [', num_it, ']: Reducing dt:', dt_P,
+                  '=>', dt_P/2, '(s) dS:', pic_diff)
+            dt_P = dt_P/2
+            num_sub_it = 0
+            P = Pn.copy()
+            S = Sn.copy()
+            update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT,
+                              krB, rho_f, Kx, Ky, Kz, alpha_vg, n_vg,
+                              S_r, S_s, A_vg, gamma_vg, krm)
+            if dt_P <= 1e-8:
+                break
+
+    return t_P, dt_P, P, converged, num_it
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def richards_stencil(aE, aW, aN, aS, aT, aB, bgrav, bdir, diag, b,
+                     P, Pn, S, Sn, krE, krW, krN, krS, krT, krB,
+                     dSdP, nue, rho_f, phi, c_f, c_r, Kx, Ky, Kz, BP, WP,
+                     dt_P):
+    '''
+        Build the linearised Richards system for one frozen Picard pass
+        (mixed form, Celia et al. 1990):
+
+        (coef_C + coef_P + Msum) P - sum(a_face kr P_nb)
+            = bgrav + bdir + bS + coef_P Pn + WP
+
+        with bS = phi rho/dt (Sn - S + dS/dP|P^m),
+             coef_C = phi rho/dt dS/dP|P^m,
+             coef_P = Sn rho c_t / dt.
+
+        aE..aB   face transmissivities alpha()*kr_face (zero at domain
+                 faces and faces to Dirichlet cells; their contribution
+                 is folded into bdir)
+        bgrav    gravity terms with the signs of the SOR right-hand side
+        bdir     Dirichlet boundary contributions a_face * P_dirichlet
+        diag     operator diagonal (coef_C + coef_P + Msum)
+        b        right-hand side
+    '''
+    for k in prange(nz):
+        for j in prange(ny):
+            for i in prange(nx):
+                aE_ = aW_ = aN_ = aS_ = aT_ = aB_ = 0.0
+                gE = gW = gT = gB = 0.0
+                bdir_ = 0.0
+                if i != nx-1:
+                    aE_ = alpha(i+1, j, k, i, j, k, nue, rho_f, Kx, qx,
+                                dx, i+1, i, 0) * krE[i, j, k]
+                    gE = aE_ * beta_g(i+1, j, k, i, j, k, rho_f, 0)
+                    if BP[i+1, j, k]:
+                        bdir_ += aE_ * P[i+1, j, k]
+                if i != 0:
+                    aW_ = alpha(i, j, k, i-1, j, k, nue, rho_f, Kx, qx,
+                                dx, i-1, i, 0) * krW[i, j, k]
+                    gW = aW_ * beta_g(i, j, k, i-1, j, k, rho_f, 0)
+                    if BP[i-1, j, k]:
+                        bdir_ += aW_ * P[i-1, j, k]
+                if j != ny-1:
+                    aN_ = alpha(i, j+1, k, i, j, k, nue, rho_f, Ky, qy,
+                                dy, j+1, j, 1) * krN[i, j, k]
+                    if BP[i, j+1, k]:
+                        bdir_ += aN_ * P[i, j+1, k]
+                if j != 0:
+                    aS_ = alpha(i, j, k, i, j-1, k, nue, rho_f, Ky, qy,
+                                dy, j-1, j, 1) * krS[i, j, k]
+                    if BP[i, j-1, k]:
+                        bdir_ += aS_ * P[i, j-1, k]
+                if k != nz-1:
+                    aT_ = alpha(i, j, k+1, i, j, k, nue, rho_f, Kz, qz,
+                                dz, k+1, k, 2) * krT[i, j, k]
+                    gT = aT_ * beta_g(i, j, k+1, i, j, k, rho_f, 2)
+                    if BP[i, j, k+1]:
+                        bdir_ += aT_ * P[i, j, k+1]
+                if k != 0:
+                    aB_ = alpha(i, j, k, i, j, k-1, nue, rho_f, Kz, qz,
+                                dz, k-1, k, 2) * krB[i, j, k]
+                    gB = aB_ * beta_g(i, j, k, i, j, k-1, rho_f, 2)
+                    if BP[i, j, k-1]:
+                        bdir_ += aB_ * P[i, j, k-1]
+
+                por = phi[i, j, k]
+                coef_S = por * rho_f[i, j, k] / dt_P
+                bS_ = coef_S * (Sn[i, j, k] - S[i, j, k]
+                                + dSdP[i, j, k] * P[i, j, k])
+                coef_C_ = coef_S * dSdP[i, j, k]
+                coef_P_ = Sn[i, j, k] * rho_f[i, j, k] * \
+                    ((1 - por) * c_r[i, j, k] + por * c_f[i, j, k]) / dt_P
+
+                Msum_ = aE_ + aW_ + aN_ + aS_ + aT_ + aB_
+                bgrav[i, j, k] = gE - gW + gT - gB
+                bdir[i, j, k] = bdir_
+                diag[i, j, k] = coef_C_ + coef_P_ + Msum_
+                b[i, j, k] = (bgrav[i, j, k] + bdir[i, j, k] + bS_
+                              + coef_P_ * Pn[i, j, k] + WP[i, j, k])
+                # faces to Dirichlet cells are excluded from the operator
+                aE[i, j, k] = 0.0 if (i != nx-1 and BP[i+1, j, k]) else aE_
+                aW[i, j, k] = 0.0 if (i != 0 and BP[i-1, j, k]) else aW_
+                aN[i, j, k] = 0.0 if (j != ny-1 and BP[i, j+1, k]) else aN_
+                aS[i, j, k] = 0.0 if (j != 0 and BP[i, j-1, k]) else aS_
+                aT[i, j, k] = 0.0 if (k != nz-1 and BP[i, j, k+1]) else aT_
+                aB[i, j, k] = 0.0 if (k != 0 and BP[i, j, k-1]) else aB_
+
+
+@njit(fastmath=numba_fastmath, cache=numba_cache, nogil=numba_nogil)
+def compute_P_RICH_CG(P, Pn_r, S, Sn, kr, krE, krW, krN, krS, krT, krB,
+                      dSdP, c_f, c_r, nue, rho_f, phi, Kx, Ky, Kz, qx, qy,
+                      qz, dt_P, BP, WP, alpha_vg, n_vg, S_r, S_s, A_vg,
+                      gamma_vg, krm, conv_s, max_dt,
+                      max_it=MAXIT_P, P_conv=1e-10, pcg_omega=1.0):
+    '''
+        Modified-Picard solution of the mixed-form Richards equation with
+        a preconditioned CG solver for the inner linear systems (same
+        outer loop as compute_P_RICH). The CG converges on the RESIDUAL
+        of the linearised system, which is the cell-wise mass balance
+        error - the correct criterion for the nearly elliptic saturated
+        zone where change-based SOR criteria are unattainable.
+    '''
+    t_P = 0
+    converged = False
+    num_it = 0
+    num_sub_it = 0
+    aE = numpy.zeros_like(krE)
+    aW = numpy.zeros_like(krE)
+    aN = numpy.zeros_like(krE)
+    aS = numpy.zeros_like(krE)
+    aT = numpy.zeros_like(krE)
+    aB = numpy.zeros_like(krE)
+    bgrav = numpy.zeros_like(P)
+    bdir = numpy.zeros_like(P)
+    diag = numpy.zeros_like(P)
+    b = numpy.zeros_like(P)
+    r = numpy.zeros_like(P)
+    z = numpy.zeros_like(P)
+    p = numpy.zeros_like(P)
+    Ax = numpy.zeros_like(P)
+    Ap = numpy.zeros_like(P)
+
+    while not converged:
+        num_sub_it += 1
+        # frozen Picard coefficients: build stencil and right-hand side
+        richards_stencil(aE, aW, aN, aS, aT, aB, bgrav, bdir, diag, b,
+                         P, Pn_r, S, Sn, krE, krW, krN, krS, krT, krB,
+                         dSdP, nue, rho_f, phi, c_f, c_r, Kx, Ky, Kz, BP,
+                         WP, dt_P)
+
+        # ---- inner PCG solve with frozen coefficients ----
+        cg_matvec(P, Ax, aE, aW, aN, aS, aT, aB, diag)
+        cg_residual(r, b, Ax, BP)
+        b_norm = numpy.sqrt(cg_dot(r, r))
+
+        inner_conv = False
+        it = 0
+        if b_norm >= 1e-200:
+            cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP,
+                            pcg_omega)
+            p[:] = z
+            rz = cg_dot(r, z)
+            while it < max_it:
+                it += 1
+                cg_matvec(p, Ap, aE, aW, aN, aS, aT, aB, diag)
+                pAp = cg_dot(p, Ap)
+                if abs(pAp) < 1e-200:
+                    break
+                alpha_cg = rz / pAp
+                cg_update(P, r, p, Ap, alpha_cg, BP)
+                r_norm = numpy.sqrt(cg_dot(r, r))
+                if r_norm / b_norm < P_conv:
+                    inner_conv = True
+                    break
+                cg_precondition(z, r, aE, aW, aN, aS, aT, aB, diag, BP,
+                                pcg_omega)
+                rz_new = cg_dot(r, z)
+                if abs(rz) < 1e-200:
+                    break
+                beta_cg = rz_new / rz
+                cg_update_p(p, z, beta_cg, BP)
+                rz = rz_new
+        else:
+            inner_conv = True
+
+        num_it += 1
+        if not inner_conv:
+            # inner solver did not converge: reduce dt, restart the step
+            print(' t:', t_P, 'P [CG', it, ']: Reducing dt:', dt_P,
+                  '=>', dt_P/2, '(s) rel res:', r_norm/b_norm)
+            dt_P = dt_P/2
+            num_sub_it = 0
+            P = Pn_r.copy()
+            S = Sn.copy()
+            update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT,
+                              krB, rho_f, Kx, Ky, Kz, alpha_vg, n_vg,
+                              S_r, S_s, A_vg, gamma_vg, krm)
+            if dt_P <= 1e-8:
+                break
+            continue
+
+        # ---- Picard update: saturation, capacity, face kr ----
+        Sold = S.copy()
+        update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT, krB,
+                          rho_f, Kx, Ky, Kz, alpha_vg, n_vg, S_r, S_s,
+                          A_vg, gamma_vg, krm)
+        pic_diff = l2_norm(S, Sold, 'S')
+        if pic_diff < conv_s:
+            converged = True
+            t_P += dt_P
+            # Increase time step by factor 1.25 for the next time step
+            if num_sub_it < max_it/2:
+                dt_P = min(dt_P*1.25, max_dt)
+        elif num_sub_it >= 10:
+            # Picard iteration stagnates: reduce dt, restart the step
+            print(' t:', t_P, 'PICARD [', num_it, ']: Reducing dt:', dt_P,
+                  '=>', dt_P/2, '(s) dS:', pic_diff)
+            dt_P = dt_P/2
+            num_sub_it = 0
+            P = Pn_r.copy()
+            S = Sn.copy()
+            update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT,
+                              krB, rho_f, Kx, Ky, Kz, alpha_vg, n_vg,
+                              S_r, S_s, A_vg, gamma_vg, krm)
+            if dt_P <= 1e-8:
+                break
+
+    return t_P, dt_P, P, converged, num_it
+
+
+@njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
+      nogil=numba_nogil)
+def compute_C(C, D_fx, D_fy, D_fz, phi, S, rho_f, qx, qy, qz, dt_C, BC, WC,
+              RC, e, omega=1, SOR=1.0, max_it=MAXIT_C, inc_it=1.05,
+              max_dt=dt_max, min_dt=1e-8, C_conv=1e-10):
 
     t_C = 0
     converged = False
@@ -1129,7 +1799,8 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
         if i != nx-1:
             dd = dx[i]
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
-            ph = amean(i+1, j, k, i, j, k, phi, 0)
+            ph = amean(i+1, j, k, i, j, k, phi, 0) \
+                * amean(i+1, j, k, i, j, k, S, 0)
             A_ = (harm(i+1, j, k, i, j, k, D_fx, 0) * ph + D_xr) / dd2
             N_ = min(qx[i, j, k], 0) / dd
             H_ = max(qx[i, j, k], 0) / dd
@@ -1138,7 +1809,8 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
         if i != 0:
             dd = dx[i]
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
-            ph = amean(i-1, j, k, i, j, k, phi, 0)
+            ph = amean(i-1, j, k, i, j, k, phi, 0) \
+                * amean(i-1, j, k, i, j, k, S, 0)
             B_ = (harm(i-1, j, k, i, j, k, D_fx, 0) * ph + D_xl) / dd2
             M_ = max(qx[i-1, j, k], 0) / dd
             G_ = min(qx[i-1, j, k], 0) / dd
@@ -1147,7 +1819,8 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
         if j != ny-1:
             dd = dy[j]
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
-            ph = amean(i, j+1, k, i, j, k, phi, 1)
+            ph = amean(i, j+1, k, i, j, k, phi, 1) \
+                * amean(i, j+1, k, i, j, k, S, 1)
             C_ = (harm(i, j+1, k, i, j, k, D_fy, 1) * ph + D_yr) / dd2
             P_ = min(qy[i, j, k], 0) / dd
             J_ = max(qy[i, j, k], 0) / dd
@@ -1156,7 +1829,8 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
         if j != 0:
             dd = dy[j]
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
-            ph = amean(i, j-1, k, i, j, k, phi, 1)
+            ph = amean(i, j-1, k, i, j, k, phi, 1) \
+                * amean(i, j-1, k, i, j, k, S, 1)
             D_ = (harm(i, j-1, k, i, j, k, D_fy, 1) * ph + D_yl) / dd2
             O_ = max(qy[i, j-1, k], 0) / dd
             I_ = min(qy[i, j-1, k], 0) / dd
@@ -1165,7 +1839,8 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
         if k != nz-1:
             dd = dz[k]
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
-            ph = amean(i, j, k+1, i, j, k, phi, 2)
+            ph = amean(i, j, k+1, i, j, k, phi, 2) \
+                * amean(i, j, k+1, i, j, k, S, 2)
             E_ = (harm(i, j, k+1, i, j, k, D_fz, 2) * ph + D_zr) / dd2
             R_ = min(qz[i, j, k], 0) / dd
             L_ = max(qz[i, j, k], 0) / dd
@@ -1174,13 +1849,14 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
         if k != 0:
             dd = dz[k]
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
-            ph = amean(i, j, k-1, i, j, k, phi, 2)
+            ph = amean(i, j, k-1, i, j, k, phi, 2) \
+                * amean(i, j, k-1, i, j, k, S, 2)
             F_ = (harm(i, j, k-1, i, j, k, D_fz, 2) * ph + D_zl) / dd2
             Q_ = max(qz[i, j, k-1], 0) / dd
             K_ = min(qz[i, j, k-1], 0) / dd
             Rnew = (F_ + Q_) * C[i, j, k-1]
             Rold = (F_ + Q_) * Cn[i, j, k-1]
-        R = RC[i,j,k] * phi[i, j, k] / dt_C
+        R = RC[i,j,k] * phi[i, j, k] * S[i, j, k] / dt_C
         M = - A_ - B_ - C_ - D_ - E_ - F_ + G_ - H_ + I_ - J_ + K_ - L_
 
         if config.C_IMBLFLO: # and WC[i, j, k] == 0:
@@ -1239,9 +1915,9 @@ def compute_C(C, D_fx, D_fy, D_fz, phi, rho_f, qx, qy, qz, dt_C, BC, WC, RC,
 
 @njit(parallel=numba_parallel, fastmath=numba_fastmath, cache=numba_cache,
       nogil=numba_nogil)
-def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
-              SOR=1.0, max_it=MAXIT_T, inc_it=1.05, max_dt=dt_max, min_dt=1e-8,
-              T_conv=1e-10):
+def compute_T(T, l_f, cp_f, rho_f, phi, S, qx, qy, qz, dt_T, BT, WT, e,
+              omega=1, SOR=1.0, max_it=MAXIT_T, inc_it=1.05, max_dt=dt_max,
+              min_dt=1e-8, T_conv=1e-10):
     t_T = 0
     converged = False
     num_it = 0
@@ -1265,6 +1941,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             dd = dx[i]
             dd2 = (0.5 * (dx[i+1] + dx[i])) * dd
             por = amean(i, j, k, i+1, j, k, phi, 0)
+            s_ = amean(i, j, k, i+1, j, k, S, 0)
             lf = harm(i, j, k, i+1, j, k, l_f, 0)
             lr = harm(i, j, k, i+1, j, k, l_r, 0)
             # upwinded heat capacity of the flowing fluid: a harmonic
@@ -1276,7 +1953,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             else:
                 cpf = cp_f[i+1, j, k]
             rhocpf = harm(i, j, k, i+1, j, k, rho_f, 0) * cpf
-            A_ = ((1-por) * lr + por * lf + D_xr * rhocpf) / dd2
+            A_ = ((1-por) * lr + por * s_ * lf + D_xr * rhocpf) / dd2
             S_ = rhocpf / dd
             N_ = min(qx[i, j, k], 0) * S_
             H_ = max(qx[i, j, k], 0) * S_
@@ -1286,6 +1963,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             dd = dx[i]
             dd2 = (0.5 * (dx[i-1] + dx[i])) * dd
             por = amean(i, j, k, i-1, j, k, phi, 0)
+            s_ = amean(i, j, k, i-1, j, k, S, 0)
             lf = harm(i, j, k, i-1, j, k, l_f, 0)
             lr = harm(i, j, k, i-1, j, k, l_r, 0)
             if qx[i-1, j, k] > 0:
@@ -1293,7 +1971,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             else:
                 cpf = cp_f[i, j, k]
             rhocpf = harm(i, j, k, i-1, j, k, rho_f, 0) * cpf
-            B_ = ((1-por) * lr + por * lf + D_xl * rhocpf) / dd2
+            B_ = ((1-por) * lr + por * s_ * lf + D_xl * rhocpf) / dd2
             S_ = rhocpf / dd
             M_ = max(qx[i-1, j, k], 0) * S_
             G_ = min(qx[i-1, j, k], 0) * S_
@@ -1303,6 +1981,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             dd = dy[j]
             dd2 = (0.5 * (dy[j+1] + dy[j])) * dd
             por = amean(i, j+1, k,  i, j, k, phi, 1)
+            s_ = amean(i, j+1, k, i, j, k, S, 1)
             lf = harm(i, j+1, k, i, j, k, l_f, 1)
             lr = harm(i, j+1, k, i, j, k, l_r, 1)
             if qy[i, j, k] >= 0:
@@ -1310,7 +1989,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             else:
                 cpf = cp_f[i, j+1, k]
             rhocpf = harm(i, j+1, k, i, j, k, rho_f, 1) * cpf
-            C_ = ((1-por) * lr + por * lf + D_yr * rhocpf) / dd2
+            C_ = ((1-por) * lr + por * s_ * lf + D_yr * rhocpf) / dd2
             S_ = rhocpf / dd
             P_ = min(qy[i, j, k], 0) * S_
             J_ = max(qy[i, j, k], 0) * S_
@@ -1320,6 +1999,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             dd = dy[j]
             dd2 = (0.5 * (dy[j-1] + dy[j])) * dd
             por = amean(i, j-1, k, i, j, k, phi, 1)
+            s_ = amean(i, j-1, k, i, j, k, S, 1)
             lf = harm(i, j-1, k, i, j, k, l_f, 1)
             lr = harm(i, j-1, k, i, j, k, l_r, 1)
             if qy[i, j-1, k] > 0:
@@ -1327,7 +2007,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             else:
                 cpf = cp_f[i, j, k]
             rhocpf = harm(i, j-1, k, i, j, k, rho_f, 1) * cpf
-            D_ = ((1-por) * lr + por * lf + D_yl * rhocpf) / dd2
+            D_ = ((1-por) * lr + por * s_ * lf + D_yl * rhocpf) / dd2
             S_ = rhocpf / dd
             O_ = max(qy[i, j-1, k], 0) * S_
             I_ = min(qy[i, j-1, k], 0) * S_
@@ -1337,6 +2017,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             dd = dz[k]
             dd2 = (0.5 * (dz[k+1] + dz[k])) * dd
             por = amean(i, j, k+1, i, j, k, phi, 2)
+            s_ = amean(i, j, k+1, i, j, k, S, 2)
             lf = harm(i, j, k+1, i, j, k, l_f, 2)
             lr = harm(i, j, k+1, i, j, k, l_r, 2)
             if qz[i, j, k] >= 0:
@@ -1344,7 +2025,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             else:
                 cpf = cp_f[i, j, k+1]
             rhocpf = harm(i, j, k+1, i, j, k, rho_f, 2) * cpf
-            E_ = ((1-por) * lr + por * lf + D_zr * rhocpf) / dd2
+            E_ = ((1-por) * lr + por * s_ * lf + D_zr * rhocpf) / dd2
             S_ = rhocpf / dd
             R_ = min(qz[i, j, k], 0) * S_
             L_ = max(qz[i, j, k], 0) * S_
@@ -1354,6 +2035,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             dd = dz[k]
             dd2 = (0.5 * (dz[k-1] + dz[k])) * dd
             por = amean(i, j, k-1, i, j, k, phi, 2)
+            s_ = amean(i, j, k-1, i, j, k, S, 2)
             lf = harm(i, j, k-1, i, j, k, l_f, 2)
             lr = harm(i, j, k-1, i, j, k, l_r, 2)
             if qz[i, j, k-1] > 0:
@@ -1361,7 +2043,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             else:
                 cpf = cp_f[i, j, k]
             rhocpf = harm(i, j, k-1, i, j, k, rho_f, 2) * cpf
-            F_ = ((1-por) * lr + por * lf + D_zl * rhocpf) / dd2
+            F_ = ((1-por) * lr + por * s_ * lf + D_zl * rhocpf) / dd2
             S_ = rhocpf / dd
             Q_ = max(qz[i, j, k-1], 0) * S_
             K_ = min(qz[i, j, k-1], 0) * S_
@@ -1369,7 +2051,7 @@ def compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt_T, BT, WT, e, omega=1,
             Rold = (F_ + Q_) * Tn[i, j, k-1]
 
         por_ = phi[i, j, k]
-        R = (por_ * rho_f[i, j, k] * cp_f[i, j, k] +
+        R = (por_ * S[i, j, k] * rho_f[i, j, k] * cp_f[i, j, k] +
              (1 - por_) * rho_r[i, j, k] * cp_r[i, j, k]) / dt_T
         M = - A_ - B_ - C_ - D_ - E_ - F_ + G_ - H_ + I_ - J_ + K_ - L_
 
@@ -1502,6 +2184,8 @@ print_row('', 'MASSBALAN [%s]  SIA [%s]  SMOLAR_C [%s]  SMOLAR_T [%s]'
              onoff(config.SMOLAR_C), onoff(config.SMOLAR_T)))
 print_row('', 'IMBLFLO C [%s]  T [%s]'
           % (onoff(config.C_IMBLFLO), onoff(config.T_IMBLFLO)))
+if UNSATURAT:
+    print_row('', 'RICHARDS [on]  KRMODEL %s' % KRMODEL)
 print_row('SOLVER', 'SOR_P %.4f | SOR_C %.4f | SOR_T %.4f'
           % (config.SOR_P, config.SOR_C, config.SOR_T))
 print_row('WEIGHTING', 'OMEGA_C %g | OMEGA_T %g'
@@ -1524,27 +2208,43 @@ rhof_prev = numpy.zeros_like(rho_f)
 P_prev2 = P.copy()      # pressure two time steps ago (initial guess)
 dt_CFL_prev = 1e10      # CFL time step limit of the previous time step
 
+# CFL-based time step cap for the next time step (UNSATURAT: applied
+# before the flow solve, 'CFL first')
+dt_cfl_prev = dt_max_abs
+
+if UNSATURAT:
+    # consistent initial saturation, capacity and relative permeability
+    # after the initial fluid properties evaluation
+    update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT, krB, rho_f,
+                      Kx, Ky, Kz, alpha_vg, n_vg, S_r, S_s, A_vg, gamma_vg,
+                      krm)
+
 while t_sim < t:
 
     SIA_filled = False
     SIA_iter = 0
     SIA_diff = 0
 
-    # extrapolated initial guess for the pressure solution
-    # (P_prev + (P_prev - P_prev2); Dirichlet cells are excluded)
-    P_interior = (BP == 0)
-    if t_sim > 0:
-        Pprev_copy = P.copy()
-        P[P_interior] = 2.0 * P[P_interior] - P_prev2[P_interior]
-        P_prev2[:] = Pprev_copy
+    # saturation at the previous time level for the mixed-form storage term
+    if UNSATURAT:
+        Sn = S.copy()
+        P_step = P.copy()      # pressure at the previous time level
     else:
-        P_prev2[:] = P
+        # extrapolated initial guess for the pressure solution
+        # (P_prev + (P_prev - P_prev2); Dirichlet cells are excluded)
+        P_interior = (BP == 0)
+        if t_sim > 0:
+            Pprev_copy = P.copy()
+            P[P_interior] = 2.0 * P[P_interior] - P_prev2[P_interior]
+            P_prev2[:] = Pprev_copy
+        else:
+            P_prev2[:] = P
 
-    # predictive CFL clamp: velocities change slowly between consecutive
-    # time steps, so clamping dt before the flow solution avoids pressure
-    # solves at time steps that would be reduced afterwards anyway
-    if config.FLUIDFLOW and t_sim > 0 and not config.SIA:
-        dt = min(dt, dt_CFL_prev)
+        # predictive CFL clamp: velocities change slowly between consecutive
+        # time steps, so clamping dt before the flow solution avoids pressure
+        # solves at time steps that would be reduced afterwards anyway
+        if config.FLUIDFLOW and t_sim > 0 and not config.SIA:
+            dt = min(dt, dt_CFL_prev)
 
     while not SIA_filled and SIA_iter < config.SIA_maxit:
         ## outer SIA iteration here
@@ -1573,25 +2273,54 @@ while t_sim < t:
         num_it_P = 0
         if config.FLUIDFLOW:
             while not Co_Filled:
-                # build the pressure stencil (coefficients depend on rho_f,
-                # nue and the Dirichlet values in P; rebuilt per flow solve)
-                compute_stencil_P(aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
-                                  Msum, nue, rho_f, phi, c_r, c_f, Kx, Ky, Kz,
-                                  BP, P)
-                if PSOLVER == 'CG':
-                    dt, dt_P, P, Pn, converged_P, num_it_P = \
-                        compute_P_CG(
-                            P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
-                            Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
-                            max_it=MAXIT_P, P_conv=config.CONV_P,
-                            pcg_omega=CG_OMEGA, Pn_prev=P_prev2)
+                if UNSATURAT:
+                    # CFL first: cap the time step by the CFL criterion of
+                    # the previous step before solving (dt_cfl_prev)
+                    dt = min(dt, dt_cfl_prev)
+                    # modified-Picard solution of the mixed-form Richards
+                    # equation (outer Picard + inner solve in one call,
+                    # with internal dt reduction on non-convergence);
+                    # PSOLVER 'CG': preconditioned CG on the linearised
+                    # system (residual-based, robust for the nearly
+                    # elliptic saturated zone), otherwise red-black SOR
+                    if PSOLVER == 'CG':
+                        dt, dt_P, P, converged_P, num_it_P = \
+                            compute_P_RICH_CG(
+                                P, P_step, S, Sn, kr, krE, krW, krN, krS,
+                                krT, krB, dSdP, c_f, c_r, nue, rho_f, phi,
+                                Kx, Ky, Kz, qx, qy, qz, dt, BP, WP,
+                                alpha_vg, n_vg, S_r, S_s, A_vg, gamma_vg,
+                                krm, CONV_S, dt_max_abs,
+                                max_it=MAXIT_P, P_conv=config.CONV_P,
+                                pcg_omega=CG_OMEGA)
+                    else:
+                        dt, dt_P, P, converged_P, num_it_P = compute_P_RICH(
+                            P, P_step, S, Sn, kr, krE, krW, krN, krS, krT,
+                            krB, dSdP, c_f, c_r, nue, rho_f, phi, Kx, Ky,
+                            Kz, qx, qy, qz, dt, BP, WP, alpha_vg, n_vg,
+                            S_r, S_s, A_vg, gamma_vg, krm, CONV_S,
+                            dt_max_abs, SOR=config.SOR_P, max_it=MAXIT_P,
+                            P_conv=config.CONV_P)
                 else:
-                    dt, dt_P, P, Pn, converged_P, num_it_P = \
-                        compute_P(
-                            P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
-                            Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
-                            SOR=config.SOR_P, max_it=MAXIT_P,
-                            P_conv=config.CONV_P, Pn_prev=P_prev2)
+                    # build the pressure stencil (coefficients depend on rho_f,
+                    # nue and the Dirichlet values in P; rebuilt per flow solve)
+                    compute_stencil_P(aE, aW, aN, aS, aT, aB, bgrav, bdir,
+                                      Rbase, Msum, nue, rho_f, phi, c_r, c_f,
+                                      Kx, Ky, Kz, BP, P)
+                    if PSOLVER == 'CG':
+                        dt, dt_P, P, Pn, converged_P, num_it_P = \
+                            compute_P_CG(
+                                P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
+                                Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
+                                max_it=MAXIT_P, P_conv=config.CONV_P,
+                                pcg_omega=CG_OMEGA, Pn_prev=P_prev2)
+                    else:
+                        dt, dt_P, P, Pn, converged_P, num_it_P = \
+                            compute_P(
+                                P, aE, aW, aN, aS, aT, aB, bgrav, bdir, Rbase,
+                                Msum, dt, BP, WP, max_dt=dt_max, inc_it=1.25,
+                                SOR=config.SOR_P, max_it=MAXIT_P,
+                                P_conv=config.CONV_P, Pn_prev=P_prev2)
 
                 if not converged_P:
                     sys.exit('* P CONVERGENCE ERROR ' +
@@ -1601,26 +2330,46 @@ while t_sim < t:
                     print('Threading layer:', threading_layer(),
                         'Threads:', get_num_threads(), '\n')
 
-                qx, qy, qz = compute_q(P, BP, Kx, Ky, Kz, qx, qy, qz, nue, 
-                                       rho_f)
+                if UNSATURAT:
+                    qx, qy, qz = compute_q_RICH(P, BP, Kx, Ky, Kz, qx, qy,
+                                                qz, nue, rho_f, krE, krW,
+                                                krN, krS, krT, krB)
+                else:
+                    qx, qy, qz = compute_q(P, BP, Kx, Ky, Kz, qx, qy, qz, nue, 
+                                           rho_f)
 
 
                 if config.HEATTRANS or config.SPECTRANS:
                     # dt is the time step actually used for the converged
                     # P solution (returned t_P), while dt_P is the increased
                     # time step for the next flow solution
-                    e = flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r, rho_f, 
-                                   dt)
+                    if UNSATURAT:
+                        e = flow_error(P, P_step, qx, qy, qz, WP, phi, c_f,
+                                       c_r, rho_f, dt, S, Sn, True)
+                    else:
+                        e = flow_error(P, Pn, qx, qy, qz, WP, phi, c_f, c_r,
+                                       rho_f, dt, S, Sn, False)
 
                 # Check CFL and Neumann criteria to adapt maximum time step as
                 # required
                 if t_sim > 0:
-                    dt_CFL = \
-                        0.9 / (numpy.max(numpy.reshape(numpy.abs(qx) / phi,
-                                                    (ny, nz, nx)) / dx) +
-                            numpy.max(numpy.reshape(numpy.abs(qy) / phi,
-                                                    (nx, nz, ny)) / dy) +
-                            numpy.max(numpy.abs(qz) / phi / dz))
+                    if UNSATURAT:
+                        # pore velocity q/(phi*S) with dry-cell guard
+                        S_eff = numpy.maximum(S, 1e-8)
+                        dt_CFL = 0.9 / (
+                            numpy.max(numpy.abs(qx) / (phi * S_eff
+                                                       * dx[:, None, None])) +
+                            numpy.max(numpy.abs(qy) / (phi * S_eff
+                                                       * dy[None, :, None])) +
+                            numpy.max(numpy.abs(qz) / (phi * S_eff
+                                                       * dz[None, None, :])))
+                    else:
+                        dt_CFL = \
+                            0.9 / (numpy.max(numpy.reshape(numpy.abs(qx) / phi,
+                                                        (ny, nz, nx)) / dx) +
+                                numpy.max(numpy.reshape(numpy.abs(qy) / phi,
+                                                        (nx, nz, ny)) / dy) +
+                                numpy.max(numpy.abs(qz) / phi / dz))
                 else:
                     dt_CFL = 1e10
                 dt_CFL_prev = dt_CFL
@@ -1642,7 +2391,13 @@ while t_sim < t:
                 # if config.OMEGA_T == 0:  # explicit heat transport disabled
                 #     dt_max_T = dt_NeT
 
-                if config.SIA:
+                if UNSATURAT:
+                    # CFL first: the time step was already capped by the
+                    # CFL criterion of the previous step (dt_cfl_prev)
+                    # before the flow solve; store the new criterion for
+                    # the next time step
+                    dt_cfl_prev = min(dt_CFL, dt_max_abs)
+                elif config.SIA:
                     dt_max = min(dt_max_C, dt_max_T, dt_max_P)
                 else:
                     dt_max = min(dt_CFL, dt_max_C, dt_max_T, dt_max_P)
@@ -1661,9 +2416,12 @@ while t_sim < t:
                             numpy.min(T)) +
                         ' [C+] %6.4f [C-] %6.4f' % (numpy.max(C), 
                             numpy.min(C)), end='')
+                    if UNSATURAT:
+                        print(' [S+] %6.4f [S-] %6.4f'
+                            % (numpy.max(S), numpy.min(S)), end='')
 
                 Co_Filled = True
-                if dt > dt_max*1.0:
+                if not UNSATURAT and dt > dt_max*1.0:
                     num_CFL += num_it_P  # count also CFL correction iterations
                     CFL += 1
                     dt = dt_max  # /2 # reduce dt to match CFL criterion
@@ -1681,8 +2439,8 @@ while t_sim < t:
                     dt, dt_C, C[:, :, :, n], converged_C, num_itC = \
                         compute_C(
                             C[:, :, :, n], D_fx[:, :, :, n], D_fy[:, :, :, n],
-                            D_fz[:, :, :, n], phi, rho_f, qx, qy, qz, dt, BC,
-                            WC[:, :, :, n], R, e,
+                            D_fz[:, :, :, n], phi, S, rho_f, qx, qy, qz, dt,
+                            BC, WC[:, :, :, n], R, e,
                             omega=config.OMEGA_C, SOR=config.SOR_C, 
                             max_it=MAXIT_C, C_conv=config.CONV_C)
 
@@ -1701,7 +2459,7 @@ while t_sim < t:
                             compute_C(
                             C[:, :, :, n], D_fx[:, :, :, n],
                             D_fy[:, :, :, n], D_fz[:, :, :, n],
-                            phi, rho_f, vx, vy, vz, dt, BC, WC[:, :, :, n],
+                            phi, S, rho_f, vx, vy, vz, dt, BC, WC[:, :, :, n],
                             R, ZEROS, omega=config.OMEGA_C, 
                             max_it=MAXIT_C, SOR=config.SOR_C,
                             C_conv=config.CONV_C)
@@ -1720,21 +2478,23 @@ while t_sim < t:
             if 'NLTE_SOLV' in dir(config) and config.NLTE_SOLV:
                 # Gas phase (layer 0)
                 dt, dt_T, T[:,:,:,0], converged_T, num_itT1 = \
-                    compute_T(T[:,:,:,0], l_f, cp_f, rho_f, ONES, qx, qy, qz, dt, BT, ZEROS,
+                    compute_T(T[:,:,:,0], l_f, cp_f, rho_f, ONES, S, qx, qy,
+                            qz, dt, BT, ZEROS,
                             e, omega=config.OMEGA_T, max_it=MAXIT_T, SOR=config.SOR_T,
                             T_conv=config.CONV_T)
                 # Solid/immobile phase (layer 1) - zero fluid properties
                 dt, dt_T, T[:,:,:,1], converged_T, num_itT2 = \
-                    compute_T(T[:,:,:,1], ZEROS, ZEROS, ZEROS, ZEROS, qx, qy, qz, dt, BT, WT,
+                    compute_T(T[:,:,:,1], ZEROS, ZEROS, ZEROS, ZEROS, S, qx,
+                            qy, qz, dt, BT, WT,
                             e, omega=config.OMEGA_T, max_it=MAXIT_T, SOR=config.SOR_T,
                             T_conv=config.CONV_T)
                 num_itT = num_itT1 + num_itT2
 
             else:
                 dt, dt_T, T, converged_T, num_itT = \
-                    compute_T(T, l_f, cp_f, rho_f, phi, qx, qy, qz, dt, BT, WT,
-                            e, omega=config.OMEGA_T, max_it=MAXIT_T, SOR=config.SOR_T,
-                            T_conv=config.CONV_T)
+                    compute_T(T, l_f, cp_f, rho_f, phi, S, qx, qy, qz, dt, BT,
+                            WT, e, omega=config.OMEGA_T, max_it=MAXIT_T,
+                            SOR=config.SOR_T, T_conv=config.CONV_T)
 
             num_it_T += num_itT
 
@@ -1747,8 +2507,8 @@ while t_sim < t:
                                         eps=1e-15, Sc=1.08)
 
                 dt, dt_T, T, converged_T, num_itT = \
-                    compute_T(T, l_f, cp_f, rho_f, phi, vx, vy, vz, dt, BT, WT,
-                            ZEROS, omega=config.OMEGA_T, max_it=MAXIT_T,
+                    compute_T(T, l_f, cp_f, rho_f, phi, S, vx, vy, vz, dt, BT,
+                            WT, ZEROS, omega=config.OMEGA_T, max_it=MAXIT_T,
                             SOR=config.SOR_T, T_conv=config.CONV_T)
 
                 num_it_T += num_itT
@@ -1791,7 +2551,14 @@ while t_sim < t:
         if config.FLUIDPROP:
             update_fluid_properties()
 
-        if config.SIA:
+        if UNSATURAT:
+            # the modified-Picard iteration (outer loop) and any required
+            # dt reduction are handled inside compute_P_RICH; the time
+            # step is finished after one call
+            SIA_filled = True
+            if n_tsteps % config.PRINTOUT == 0:
+                print(' [PICARD] %4d' % num_it_P)
+        elif config.SIA:
             SIA_diff = l2_norm(rho_f, rhof_prev, 'rhof')
             if n_tsteps % config.PRINTOUT == 0:
                 print(' [SIA] %4d [SIA] %6.2e' % (SIA_iter, SIA_diff))
@@ -1813,6 +2580,13 @@ while t_sim < t:
         numitP += num_it_P
         numitC += num_it_C
         numitT += num_it_T
+
+    if UNSATURAT and config.FLUIDFLOW:
+        # final consistency: saturation and kr exactly consistent with the
+        # converged pressure field (for output and the next time step)
+        update_S_kr_faces(P, S, kr, dSdP, krE, krW, krN, krS, krT, krB,
+                          rho_f, Kx, Ky, Kz, alpha_vg, n_vg, S_r, S_s,
+                          A_vg, gamma_vg, krm)
 
     # dynamic boundary conditions
     if config.DYNAMICBC:

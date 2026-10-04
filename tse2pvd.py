@@ -41,11 +41,17 @@ for num, filename in enumerate(pfiles):
     with open(filename, 'rb') as pfile:
         data = joblib.load(pfile)
 
-    # current file format (34 elements, incl. WC and e)
-    if len(data) == 34:
+    # current file format (35 elements, incl. WC, e and saturation S)
+    if len(data) == 35:
+        lx, ly, lz, nx, ny, nz, dx, dy, dz, t_sim, dt, P, C, \
+            T, qx, qy, qz, phi, Kx, Ky, Kz, rho_f, nue, cp_f, l_f, \
+            BP, BC, BT, L, mass, WP, WT, WC, e, S = data
+    # previous file format (34 elements, incl. WC and e)
+    elif len(data) == 34:
         lx, ly, lz, nx, ny, nz, dx, dy, dz, t_sim, dt, P, C, \
             T, qx, qy, qz, phi, Kx, Ky, Kz, rho_f, nue, cp_f, l_f, \
             BP, BC, BT, L, mass, WP, WT, WC, e = data
+        S = numpy.ones((nx, ny, nz))  # saturation not stored in old files
     # previous file format (32 elements, no WC and e)
     elif len(data) == 32:
         lx, ly, lz, nx, ny, nz, dx, dy, dz, t_sim, dt, P, C, \
@@ -96,6 +102,7 @@ for num, filename in enumerate(pfiles):
     # export all transported species (species 0 keeps its legacy name)
     cellData = {"Temperature": T,
                 "Pressure": P,
+                "Saturation": S,
                 "Porosity": phi,
                 "Kx": Kx,
                 "Ky": Ky,
