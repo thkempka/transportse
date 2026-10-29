@@ -34,6 +34,14 @@ C[3] anhydrite    output             <- selected output 'Anhydrite'
 C[4] pH           output             <- selected output 'pH'
 ```
 
+S(6) is a real transported species here (SPTRANS = [0, 1, 2]), because PhreeqcRM
+needs every component in its transport array. Example 06 needs one species less:
+it writes `S str(C[1])` into the PHREEQC input, i.e. ties sulphur to Ca inside
+the solution definition. Both are equivalent, since anhydrite dissolution and
+precipitation move Ca and S(6) in a 1:1 ratio - the per-cell difference between
+C[1] and C[2] stays at ~1e-11. The well element is the injectate in both cases
+(Ca = S(6) = 0, no anhydrite, pH 7), held constant as a Dirichlet cell.
+
 ## Two things the coupling needs
 
 1. **Units.** PhreeqcRM derives its own water mass per cell from porosity,
