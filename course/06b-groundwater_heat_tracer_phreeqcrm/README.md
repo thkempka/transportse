@@ -11,12 +11,12 @@ one `IPhreeqc` instance called per cell via phreeqpy.
 | reaction engine | phreeqpy (`IPhreeqc`) | PhreeqcRM |
 | call pattern | one `run_string()` per cell and time step (~2.2 M calls) | one `RunCells()` per time step (852 calls) |
 | parallelisation | joblib workers (`parallel_chemistry`) | OpenMP inside the module (`parallel_chemistry` threads) |
-| pH | input only (`C[3]`), stays constant at 7 | output (`C[4]`), read from the selected output |
+| pH | output (`C[3]`, written back from the selected output) | output (`C[4]`) |
 
 ## Requirements and run
 
 ```bash
-uv pip install phreeqcrm          # not a dependency of the project
+uv sync                             # phreeqcrm is a project dependency
 ../../.venv/bin/python ../../tse.py config.py
 ```
 
@@ -57,9 +57,11 @@ C[4] pH           output             <- selected output 'pH'
 |---|---|---|---|---|
 | Ca (mol kgw⁻¹) | 0.000 – 0.0784 | 0.000 – 0.0816 | 2.7e-2 | 6.2e-5 |
 | anhydrite (mol m⁻³) | 0 – 176.7 | 0 – 178.7 | 12.4 | 0.02 |
+| pH (–) | 6.13 – 7.01 | 6.13 – 7.07 | 0.069 | −1.4e-3 |
 | temperature | — | — | 0.00 K | — |
 
-The remaining differences sit on the steep flank of the Ca front a few metres
+pH agrees to 0.07, Ca and anhydrite to 2.7e-2 mol kgw⁻¹ and 12.4 mol m⁻³. The
+remaining differences sit on the steep flank of the Ca front a few metres
 around the well (224 of 2601 cells differ by more than 1e-3 mol kgw⁻¹) and stem
 from the `K_C` conversion residual plus the Dirichlet cells, where example 6
 skips chemistry and 6b does not. `compare_06_vs_06b.py` in `course/` regenerates
@@ -72,6 +74,9 @@ the difference plot (`06b-groundwater_heat_tracer_phreeqcrm/compare_06_vs_06b.pn
 | wall time | 288.8 s | 144.9 s (**2.0× faster**) |
 | per time step | 0.339 s | 0.170 s |
 | pressure / species / heat iterations | 13 939 / 5 465 / 1 675 | 6 373 / 11 633 / 2 302 |
+
+Run-to-run spread on a busy laptop is about ±15 %; the ratio is stable across
+repeated measurements.
 
 Chemistry thread count no longer matters after the switch:
 

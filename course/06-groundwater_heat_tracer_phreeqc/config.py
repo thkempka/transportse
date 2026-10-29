@@ -308,6 +308,9 @@ def chemical_reactions(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem, i, j, k):
         C[1] = pout[2] 
         # MINERALS: back conversion from mol/kgw to mol/m^3
         C[2] = pout[6] * rho_f * phi 
+        # pH: write the result back, so C[3] is an output (and not only the
+        # initial value 7 that is fed into the SOLUTION block above)
+        C[3] = pout[0]
 
         return C, P, T, rho_f, phi, Kx, Ky, Kz
             
