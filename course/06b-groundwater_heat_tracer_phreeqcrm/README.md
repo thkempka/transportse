@@ -77,26 +77,41 @@ from the `K_C` conversion residual plus the Dirichlet cells, where example 6
 skips chemistry and 6b does not. `compare_06_vs_06b.py` in `course/` regenerates
 the difference plot (`06b-groundwater_heat_tracer_phreeqcrm/compare_06_vs_06b.png`).
 
-### The pH spikes in the leached core, and the fix
+### The pH artefact in the leached core
 
-An earlier version of this example had two narrow pH spikes (7.07 instead of
-~7.00) at the flanks of the leached core, in the cells where the anhydrite had
-been dissolved completely (`anhydrite = 0`, `Ca ≈ 0.0033 mol kgw⁻¹`).
+The pH field of 06b is not as smooth as the one of example 06. Two effects were
+separated by measurement:
 
-Cause: with the oxygen total set to `O_base + 4 S(6)`, the module's dissolved
-O(0) sits exactly on the redox boundary. There the module reduces part of the
-S(6) to sulphide (H2S(aq)/HS⁻), the missing anion charge is booked in the
-`Charge` component, and in the resulting nearly pure water the cation excess
-shows up as a slightly basic pH. A dump of the module's speciation at such a
-cell showed it clearly: `SO4²⁻` accounted for only 44 % of the total sulfur
-while `HS⁻`/H2S held the rest, leaving 0.0036 eq kgw⁻¹ of cation excess.
+**1. The 0.07 spikes (fixed).** An earlier version showed two narrow spikes at
+7.07 instead of ~7.00 in the cells where the anhydrite had been dissolved
+completely (`anhydrite = 0`, `Ca ≈ 0.0033 mol kgw⁻¹`). A dump of the module's
+speciation there showed only 44 % of the total sulfur as `SO4²⁻`, the rest as
+`H2S(aq)`/`HS⁻`, leaving 0.0036 eq kgw⁻¹ of cation excess. Cause: with the
+oxygen total at `O_base + 4 S(6)` the module's dissolved O(0) sits exactly on
+the redox boundary, where part of the sulfate is reduced. Fix: the pore water of
+this model is oxic, so the redox state is defined explicitly by keeping
+`O2_MIN = 1e-4 mol L⁻¹` (3.2 mg L⁻¹) of dissolved oxygen in the oxygen total.
+No sulfide forms any more and the spikes are gone (max pH 7.038, no cell above
+7.05).
 
-Fix: the pore water is oxic in this model, so the redox state is now defined
-explicitly by keeping a dissolved O2 concentration of `O2_MIN = 1e-4 mol L⁻¹`
-(= 3.2 mg L⁻¹, a realistic value for oxic groundwater) in the oxygen total.
-With that, no sulfide is formed, `SO4²⁻` equals the total sulfur, and the pH
-field is smooth: max 7.038 (was 7.074), no cell above 7.05, residual wiggle
-±0.02 at the exhaustion cells, and Ca/anhydrite unchanged (0.0815 / 178.7).
+**2. The remaining ±0.02 wiggle (not redox).** Cell-to-cell pH still varies by
+about ±0.02 in the leached core (6.968 … 7.023 along the injection row, where
+example 06 gives a smooth 7.006). This is *not* sulfide: it was tested with a
+copy of `phreeqc.dat` from which the S(-2) master species and all 25 solution
+species and phases that need it were removed (so sulfur can only be S(6)). That
+database loads and runs, and the wiggle is **unchanged** (6.968 … 7.023, same
+amplitude, same cells). Other attempts:
+
+| attempt | result |
+|---|---|
+| set the `Charge` component to 0 each step | worse: pH 7.13 – 7.36, 60 cells > 7.05 |
+| pin the `H` component to its initial value | worse: pH 7.13, Ca max +5 % |
+| `O2_MIN = 1e-3` / `1e-2` | wiggle 7.029 / 7.013, but at 1e-2 Ca max drops 10 % |
+
+So the residual comes from the module's per-cell charge bookkeeping, which is
+not reachable through the public API. It is cosmetic: 0.02 pH units is 5 % of
+[H⁺] in water that carries 4 % of the plume's Ca, and Ca and anhydrite are
+identical to the run without any pin (0.0815 / 178.7).
 
 ## Performance (measured on an i7-1260P, both runs back to back, same load)
 
