@@ -51,6 +51,16 @@ C[4] pH           output             <- selected output 'pH'
    every `RunCells()`). Without this, PHREEQC re-speciates part of the sulfur
    as sulfide, the redox state drifts and pH goes basic (~10 instead of ~6.5).
 
+## Transport options
+
+`C_IMBLFLO = T_IMBLFLO = True`: the flow balance error `e` of the pressure
+solution is added as a source term to the species and heat transport equations
+(`C/ρ_f · e` and `cp_f · T · e`). In this model the effect is below the fourth
+significant digit — `e` is −1.2e-13 … 4.0e-3 kg m⁻³ s⁻¹ (mean 1.8e-4), so the
+correction is negligible against the transport terms; the terms only matter for
+a poorly converged flow field. Example 6 keeps both flags off, which is why the
+comparison below is quoted to four digits rather than bit-exactly.
+
 ## Validation against example 6 (last time step, t = 4 d)
 
 | | example 6 | example 6b | max abs diff | mean diff |
@@ -67,12 +77,28 @@ from the `K_C` conversion residual plus the Dirichlet cells, where example 6
 skips chemistry and 6b does not. `compare_06_vs_06b.py` in `course/` regenerates
 the difference plot (`06b-groundwater_heat_tracer_phreeqcrm/compare_06_vs_06b.png`).
 
+### The two pH spikes
+
+The pH profile of 06b has two narrow spikes (7.07 instead of ~7.00) at the
+flanks of the leached core, where the anhydrite has been completely dissolved:
+all 12 cells above pH 7.05 have `anhydrite = 0` and `Ca ≈ 0.0034–0.0053
+mol kgw⁻¹`, i.e. almost pure water. Feeding undersaturated water into a cell
+with finite mineral shows pH creeping up as the phase is consumed
+(7.011 → 7.022 → 7.026 at anhydrite 0.139 → 0.092 → 0.018 mol), so the spike is
+the exhaustion endpoint of the phase: PHREEQC holds the phase boundary (SI = 0)
+while the phase amount goes to zero, and in the resulting nearly pure water a
+residual of ~1e-5 in the strong-ion balance is enough to shift pH by 0.07 units.
+Example 6 does not show this because it rebuilds the solution from scratch in
+every call (`pH 7 charge`, all totals re-entered), so its charge balance is
+exact each time. 12 of 2601 cells, where Ca is 4 % of the plume peak - an
+artefact of the exhaustion cells, not a physical feature.
+
 ## Performance (measured on an i7-1260P, both runs back to back, same load)
 
 | | example 6 | example 6b |
 |---|---|---|
-| wall time | 288.8 s | 144.9 s (**2.0× faster**) |
-| per time step | 0.339 s | 0.170 s |
+| wall time | 288.8 s | 139.9 – 144.9 s (**≈2.0× faster**) |
+| per time step | 0.339 s | 0.164 – 0.170 s |
 | pressure / species / heat iterations | 13 939 / 5 465 / 1 675 | 6 373 / 11 633 / 2 302 |
 
 Run-to-run spread on a busy laptop is about ±15 %; the ratio is stable across

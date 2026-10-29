@@ -25,7 +25,7 @@
       * only the dissolved components that the transport equation actually moves
         (here Ca, with S tied to it as in example 6) are written back into the
         module before every RunCells() call,
-      * requires phreeqcrm (pip install phreeqcrm) and the tse.py hook for
+      * requires phreeqcrm (project dependency) and the tse.py hook for
         config.chemical_reactions_all().
 
     pH AND REDOX
@@ -34,8 +34,9 @@
     (sulphate, species 2) and the module's total oxygen is kept consistent with
     it (O = O_base + 4 S(6)), so PHREEQC does not re-speciate sulfur as sulphide
     - otherwise the redox state drifts and pH goes basic. pH is an output here
-    (C[4], read from the selected output), unlike example 6 where C[3] is only an
-    input and stays constant at 7.
+    (C[4], read from the selected output); example 6 does the same in C[3].
+    The only artefact left are 12 cells at the anhydrite exhaustion front,
+    where pH reads 7.07 instead of 7.00 - see README.md.
 '''
 
 import os
@@ -81,8 +82,8 @@ CHEMREACT = True   # chemical reactions (PhreeqcRM)
 DYNAMICBC = False  # Use dynamic boundary conditions
 MASSBALAN = False  # calculate mass balances
 DTCHEM    = 1      # chemical reactions time stepping
-C_IMBLFLO = False
-T_IMBLFLO = False
+C_IMBLFLO = True
+T_IMBLFLO = True
 SIA       = False
 SIA_maxit = 5
 SIA_conv  = 1e-4
