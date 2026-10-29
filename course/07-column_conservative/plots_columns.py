@@ -5,7 +5,7 @@
     Run after the simulation + tse2csv.py:
 
         uv run python -u ../../tse.py config.py
-        uv run python ../../backup/tse2csv.py
+        uv run python tse2csv.py
         uv run python plots_columns.py
 
     Outputs

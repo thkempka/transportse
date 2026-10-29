@@ -5,7 +5,7 @@
 
     pipeline
         uv run python -u ../../tse.py    config.py
-        uv run python    ../../backup/tse2csv.py            # *.p -> simulation_output.csv
+        uv run python    ../07-column_conservative/tse2csv.py            # *.p -> simulation_output.csv
         uv run python    plots_columns.py         # -> comb.csv, figs/
 
     figures (all written to figs/, nothing else in the folder is overwritten)
@@ -253,7 +253,7 @@ def main(sim_csv, hours, suffix, compare_csv):
     comb_csv = 'comb%s.csv' % suffix
     int_csv = 'integrated_data%s.csv' % suffix
     if not os.path.exists(sim_csv):
-        sys.exit('"%s" not found - run "uv run python ../../backup/tse2csv.py" first'
+        sys.exit('"%s" not found - run "uv run python ../07-column_conservative/tse2csv.py" first'
                  % sim_csv)
     sim = pd.read_csv(sim_csv)
     sim['Simulation Time (hours)'] = sim['Simulation Time'] / 3600
