@@ -108,6 +108,14 @@ amplitude, same cells). Other attempts:
 | pin the `H` component to its initial value | worse: pH 7.13, Ca max +5 % |
 | `O2_MIN = 1e-3` / `1e-2` | wiggle 7.029 / 7.013, but at 1e-2 Ca max drops 10 % |
 
+The transported fields themselves are not the cause either: feeding 06b's exact
+per-cell `Ca`, `S(6)`, `T` and anhydrite values from the last time step to a
+*fresh* IPhreeqc instance (example 06's input template) gives a smooth pH of
+7.0062 – 7.0069 across the leached core, while the module reports
+6.968 – 7.023 for the same cells. Two independently transported species
+agreeing to ~1e-11 could not move pH by 0.02 (that needs ~3e-8 eq kgw⁻¹), which
+confirms the measurement.
+
 So the residual comes from the module's per-cell charge bookkeeping, which is
 not reachable through the public API. It is cosmetic: 0.02 pH units is 5 % of
 [H⁺] in water that carries 4 % of the plume's Ca, and Ca and anhydrite are
