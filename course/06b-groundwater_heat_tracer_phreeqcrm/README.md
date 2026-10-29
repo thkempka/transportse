@@ -116,6 +116,19 @@ amplitude, same cells). Other attempts:
 | pin the `H` component to its initial value | worse: pH 7.13, Ca max +5 % |
 | `O2_MIN = 1e-3` / `1e-2` | wiggle 7.029 / 7.013, but at 1e-2 Ca max drops 10 % |
 
+The Ca peaks carry a related bias: 06b reaches 0.0815 mol kgw⁻¹ where the
+anhydrite solubility at that temperature is 0.0787 (example 06 sits on the
+curve), i.e. 3.6 % too high, while the low-Ca cells agree to 1e-4. Cause: the
+unit factor `K_C` is calibrated once, at the initial reservoir state (100 °C),
+and PhreeqcRM's mol/L ↔ mol/kgw conversion depends on the solution volume it
+derives per cell, so a few-percent bias remains wherever the mineral - not the
+transport - sets the concentration. The module's equilibrium itself is exact:
+the same state in an isolated single-cell run returns 0.07864 against a
+solubility of 0.07865. Switching to mass-fraction units (`SetUnitsSolution(3)`,
+conversion purely by gfw, no density/volume involved) would remove the
+calibration, but it does not converge for this brine (`A(H2O) activity has not
+converged`), so `K_C` stays with its 3.6 % bias at the buffered cells.
+
 The transported fields themselves are not the cause either: feeding 06b's exact
 per-cell `Ca`, `S(6)`, `T` and anhydrite values from the last time step to a
 *fresh* IPhreeqc instance (example 06's input template) gives a smooth pH of
