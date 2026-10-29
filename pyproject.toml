@@ -8,7 +8,7 @@ license-files = ["COPYING", "LICENSE"]
 authors = [
     { name = "Thomas Kempka", email = "kempka@gfz.de" },
 ]
-requires-python = ">=3.13"
+requires-python = "==3.13.*"
 dependencies = [
     "cantera>=3.2",
     "intel-openmp>=2025.3",
