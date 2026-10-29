@@ -1393,21 +1393,29 @@ while t_sim < t:
                 chem_inc = 0
             chem_list = index_list(BC)
             if chem_list != [] and chem_inc == 0:
-                results = \
-                    Parallel(n_jobs=config.parallel_chemistry)(
-                        delayed(config.chemical_reactions)(
-                            C[i, j, k], P[i, j, k], T[i, j, k],
-                            rho_f[i, j, k], phi[i, j, k], Kx[i, j, k], Ky[i, j, k],
-                            Kz[i, j, k], dt_chem, i, j, k) for i, j, k in chem_list)
+                if hasattr(config, 'chemical_reactions_all'):
+                    # vectorised chemistry over all cells in one call, e.g. a
+                    # reaction module such as PhreeqcRM that handles the whole
+                    # grid internally (and parallelises by itself)
+                    C, P, T, rho_f, phi, Kx, Ky, Kz = \
+                        config.chemical_reactions_all(
+                            C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem)
+                else:
+                    results = \
+                        Parallel(n_jobs=config.parallel_chemistry)(
+                            delayed(config.chemical_reactions)(
+                                C[i, j, k], P[i, j, k], T[i, j, k],
+                                rho_f[i, j, k], phi[i, j, k], Kx[i, j, k], Ky[i, j, k],
+                                Kz[i, j, k], dt_chem, i, j, k) for i, j, k in chem_list)
 
-                for num, l in enumerate(chem_list):
-                    C[l[0], l[1], l[2]], P[l[0], l[1], l[2]], \
-                        T[l[0], l[1], l[2]], rho_f[l[0], l[1], l[2]], \
-                        phi[l[0], l[1], l[2]], Kx[l[0], l[1], l[2]], \
-                        Ky[l[0], l[1], l[2]], Kz[l[0], l[1], l[2]] = \
-                        results[num][0], results[num][1], results[num][2], \
-                        results[num][3], results[num][4], results[num][5], \
-                        results[num][6], results[num][7]
+                    for num, l in enumerate(chem_list):
+                        C[l[0], l[1], l[2]], P[l[0], l[1], l[2]], \
+                            T[l[0], l[1], l[2]], rho_f[l[0], l[1], l[2]], \
+                            phi[l[0], l[1], l[2]], Kx[l[0], l[1], l[2]], \
+                            Ky[l[0], l[1], l[2]], Kz[l[0], l[1], l[2]] = \
+                            results[num][0], results[num][1], results[num][2], \
+                            results[num][3], results[num][4], results[num][5], \
+                            results[num][6], results[num][7]
 
 
         # calculate fluid properties
