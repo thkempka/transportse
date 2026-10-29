@@ -65,9 +65,9 @@ comparison below is quoted to four digits rather than bit-exactly.
 
 | | example 6 | example 6b | max abs diff | mean diff |
 |---|---|---|---|---|
-| Ca (mol kgw⁻¹) | 0.000 – 0.0784 | 0.000 – 0.0816 | 2.7e-2 | 6.2e-5 |
-| anhydrite (mol m⁻³) | 0 – 176.7 | 0 – 178.7 | 12.4 | 0.02 |
-| pH (–) | 6.13 – 7.01 | 6.13 – 7.07 | 0.069 | −1.4e-3 |
+| Ca (mol kgw⁻¹) | 0.000 – 0.0784 | 0.000 – 0.0815 | 2.7e-2 | 2.7e-5 |
+| anhydrite (mol m⁻³) | 0 – 176.7 | 0 – 178.7 | 12.2 | 0.02 |
+| pH (–) | 6.13 – 7.01 | 6.13 – 7.04 | 0.059 | −6.5e-4 |
 | temperature | — | — | 0.00 K | — |
 
 pH agrees to 0.07, Ca and anhydrite to 2.7e-2 mol kgw⁻¹ and 12.4 mol m⁻³. The
@@ -77,34 +77,32 @@ from the `K_C` conversion residual plus the Dirichlet cells, where example 6
 skips chemistry and 6b does not. `compare_06_vs_06b.py` in `course/` regenerates
 the difference plot (`06b-groundwater_heat_tracer_phreeqcrm/compare_06_vs_06b.png`).
 
-### The two pH spikes
+### The pH spikes in the leached core, and the fix
 
-The pH profile of 06b has two narrow spikes (7.07 instead of ~7.00) at the
-flanks of the leached core, where the anhydrite has been completely dissolved:
-all 12 cells above pH 7.05 have `anhydrite = 0` and `Ca ≈ 0.0034–0.0053
-mol kgw⁻¹`, i.e. almost pure water.
+An earlier version of this example had two narrow pH spikes (7.07 instead of
+~7.00) at the flanks of the leached core, in the cells where the anhydrite had
+been dissolved completely (`anhydrite = 0`, `Ca ≈ 0.0033 mol kgw⁻¹`).
 
-Feeding undersaturated water into a cell with finite mineral shows pH creeping
-up as the phase is consumed (7.011 → 7.022 → 7.026 at anhydrite 0.139 → 0.092 →
-0.018 mol), so the spike is the **exhaustion endpoint of the phase**: the module
-keeps the phase in the assemblage at exactly 0 moles while the phase boundary
-(SI = 0) is still enforced, and in the resulting nearly pure water a residual of
-~1e-5 in the strong-ion balance moves pH by 0.07 units.
+Cause: with the oxygen total set to `O_base + 4 S(6)`, the module's dissolved
+O(0) sits exactly on the redox boundary. There the module reduces part of the
+S(6) to sulphide (H2S(aq)/HS⁻), the missing anion charge is booked in the
+`Charge` component, and in the resulting nearly pure water the cation excess
+shows up as a slightly basic pH. A dump of the module's speciation at such a
+cell showed it clearly: `SO4²⁻` accounted for only 44 % of the total sulfur
+while `HS⁻`/H2S held the rest, leaving 0.0036 eq kgw⁻¹ of cation excess.
 
-The same solution state fed to a *fresh* PHREEQC instance (`Ca = S(6) = 0.0034
-mol kgw⁻¹`, T = 20 °C, no phase) gives pH 7.0067, i.e. the artefact is not a
-property of the composition but of the exhausted phase in the module's per-cell
-state. Example 06 cannot show it: it runs all 2601 cells through **one** shared
-IPhreeqc instance, so the complete solution (pH/charge, Na, Cl, water) has to be
-re-specified for every cell - there is no per-cell state to carry over. A test
-that does carry the state over in a single instance gives pH exactly 7.0000
-throughout, i.e. a different behaviour again, not the spikes.
+Fix: the pore water is oxic in this model, so the redox state is now defined
+explicitly by keeping a dissolved O2 concentration of `O2_MIN = 1e-4 mol L⁻¹`
+(= 3.2 mg L⁻¹, a realistic value for oxic groundwater) in the oxygen total.
+With that, no sulfide is formed, `SO4²⁻` equals the total sulfur, and the pH
+field is smooth: max 7.038 (was 7.074), no cell above 7.05, residual wiggle
+±0.02 at the exhaustion cells, and Ca/anhydrite unchanged (0.0815 / 178.7).
 
 ## Performance (measured on an i7-1260P, both runs back to back, same load)
 
 | | example 6 | example 6b |
 |---|---|---|
-| wall time | 288.8 s | 139.9 – 144.9 s (**≈2.0× faster**) |
+| wall time | 288.8 s | 136 – 145 s (**≈2.0× faster**) |
 | per time step | 0.339 s | 0.164 – 0.170 s |
 | pressure / species / heat iterations | 13 939 / 5 465 / 1 675 | 6 373 / 11 633 / 2 302 |
 

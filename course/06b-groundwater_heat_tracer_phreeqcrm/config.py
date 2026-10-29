@@ -30,13 +30,17 @@
 
     pH AND REDOX
     PhreeqcRM transports the complete master set (H, O, Charge, Ca, Cl, Na, S),
-    TSE only the solutes in SPTRANS. Sulfur is therefore transported as S(6)
-    (sulphate, species 2) and the module's total oxygen is kept consistent with
-    it (O = O_base + 4 S(6)), so PHREEQC does not re-speciate sulfur as sulphide
-    - otherwise the redox state drifts and pH goes basic. pH is an output here
-    (C[4], read from the selected output); example 6 does the same in C[3].
-    The only artefact left are 12 cells at the anhydrite exhaustion front,
-    where pH reads 7.07 instead of 7.00 - see README.md.
+    TSE only the solutes in SPTRANS. Two measures keep the redox state defined:
+      * sulfur is transported as S(6) (sulphate, species 2), and the module's
+        total oxygen is kept consistent with it (O = O_base + 4 S(6)),
+      * the oxygen total carries a small dissolved O2 concentration
+        (O2_MIN, 1e-4 mol/L = 3.2 mg/L, i.e. oxic pore water). Without it
+        O(0) sits exactly on the redox boundary and the module reduces part of
+        the S(6) to sulphide; the missing anion charge then shows up as a
+        slightly basic pH (7.07 instead of 7.00) in the cells where the
+        anhydrite has been leached completely.
+    pH is an output here (C[4], read from the selected output); example 6 does
+    the same in C[3].
 '''
 
 import os
@@ -265,6 +269,8 @@ def fluid_properties(C, T, P, nue, rho_f, c_f, cp_f, l_f, cp_r, l_r, phi,
 # mineral amount and pH from the selected output.
 
 NXYZ = nx * ny * nz        # number of grid cells
+O2_MIN = 1.0e-4            # dissolved O2 in the pore water (mol/L = 3.2 mg/L),
+                           # defines the redox state (see pH AND REDOX above)
 RV_L = 1.0                 # representative volume per cell (L), keeps the
                            # water volume per cell close to 1 L as recommended
                            # by the PhreeqcRM documentation
@@ -401,7 +407,7 @@ def chemical_reactions_all(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem):
 
     conc[ICA * NXYZ:(ICA + 1) * NXYZ] = ca_rm
     conc[IS * NXYZ:(IS + 1) * NXYZ] = s6_rm
-    conc[IOX * NXYZ:(IOX + 1) * NXYZ] = _o_base + 4.0 * s6_rm
+    conc[IOX * NXYZ:(IOX + 1) * NXYZ] = _o_base + 4.0 * s6_rm + O2_MIN
 
     rm.SetTimeStep(dt_chem)
     rm.SetTemperature(T.ravel())
