@@ -82,16 +82,23 @@ the difference plot (`06b-groundwater_heat_tracer_phreeqcrm/compare_06_vs_06b.pn
 The pH profile of 06b has two narrow spikes (7.07 instead of ~7.00) at the
 flanks of the leached core, where the anhydrite has been completely dissolved:
 all 12 cells above pH 7.05 have `anhydrite = 0` and `Ca ≈ 0.0034–0.0053
-mol kgw⁻¹`, i.e. almost pure water. Feeding undersaturated water into a cell
-with finite mineral shows pH creeping up as the phase is consumed
-(7.011 → 7.022 → 7.026 at anhydrite 0.139 → 0.092 → 0.018 mol), so the spike is
-the exhaustion endpoint of the phase: PHREEQC holds the phase boundary (SI = 0)
-while the phase amount goes to zero, and in the resulting nearly pure water a
-residual of ~1e-5 in the strong-ion balance is enough to shift pH by 0.07 units.
-Example 6 does not show this because it rebuilds the solution from scratch in
-every call (`pH 7 charge`, all totals re-entered), so its charge balance is
-exact each time. 12 of 2601 cells, where Ca is 4 % of the plume peak - an
-artefact of the exhaustion cells, not a physical feature.
+mol kgw⁻¹`, i.e. almost pure water.
+
+Feeding undersaturated water into a cell with finite mineral shows pH creeping
+up as the phase is consumed (7.011 → 7.022 → 7.026 at anhydrite 0.139 → 0.092 →
+0.018 mol), so the spike is the **exhaustion endpoint of the phase**: the module
+keeps the phase in the assemblage at exactly 0 moles while the phase boundary
+(SI = 0) is still enforced, and in the resulting nearly pure water a residual of
+~1e-5 in the strong-ion balance moves pH by 0.07 units.
+
+The same solution state fed to a *fresh* PHREEQC instance (`Ca = S(6) = 0.0034
+mol kgw⁻¹`, T = 20 °C, no phase) gives pH 7.0067, i.e. the artefact is not a
+property of the composition but of the exhausted phase in the module's per-cell
+state. Example 06 cannot show it: it runs all 2601 cells through **one** shared
+IPhreeqc instance, so the complete solution (pH/charge, Na, Cl, water) has to be
+re-specified for every cell - there is no per-cell state to carry over. A test
+that does carry the state over in a single instance gives pH exactly 7.0000
+throughout, i.e. a different behaviour again, not the spikes.
 
 ## Performance (measured on an i7-1260P, both runs back to back, same load)
 
