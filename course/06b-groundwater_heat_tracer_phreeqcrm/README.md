@@ -73,9 +73,9 @@ comparison below is quoted to four digits rather than bit-exactly.
 
 | | example 6 | example 6b | max abs diff | mean diff |
 |---|---|---|---|---|
-| Ca (mol kgw⁻¹) | 0.000 – 0.0784 | 0.000 – 0.0815 | 2.7e-2 | 2.7e-5 |
-| anhydrite (mol m⁻³) | 0 – 176.7 | 0 – 178.7 | 12.2 | 0.02 |
-| pH (–) | 6.13 – 7.01 | 6.13 – 7.04 | 0.059 | −6.5e-4 |
+| Ca (mol kgw⁻¹) | 0.000 – 0.0784 | 0.000 – 0.0779 | 3.0e-2 | −2.1e-4 |
+| anhydrite (mol m⁻³) | 0 – 176.7 | 0 – 177.1 | 14.6 | −0.11 |
+| pH (–) | 6.13 – 7.01 | 6.13 – 7.04 | 0.058 | −6.6e-4 |
 | temperature | — | — | 0.00 K | — |
 
 pH agrees to 0.07, Ca and anhydrite to 2.7e-2 mol kgw⁻¹ and 12.4 mol m⁻³. The
@@ -116,18 +116,25 @@ amplitude, same cells). Other attempts:
 | pin the `H` component to its initial value | worse: pH 7.13, Ca max +5 % |
 | `O2_MIN = 1e-3` / `1e-2` | wiggle 7.029 / 7.013, but at 1e-2 Ca max drops 10 % |
 
-The Ca peaks carry a related bias: 06b reaches 0.0815 mol kgw⁻¹ where the
-anhydrite solubility at that temperature is 0.0787 (example 06 sits on the
-curve), i.e. 3.6 % too high, while the low-Ca cells agree to 1e-4. Cause: the
-unit factor `K_C` is calibrated once, at the initial reservoir state (100 °C),
-and PhreeqcRM's mol/L ↔ mol/kgw conversion depends on the solution volume it
-derives per cell, so a few-percent bias remains wherever the mineral - not the
-transport - sets the concentration. The module's equilibrium itself is exact:
-the same state in an isolated single-cell run returns 0.07864 against a
-solubility of 0.07865. Switching to mass-fraction units (`SetUnitsSolution(3)`,
-conversion purely by gfw, no density/volume involved) would remove the
-calibration, but it does not converge for this brine (`A(H2O) activity has not
-converged`), so `K_C` stays with its 3.6 % bias at the buffered cells.
+The Ca peaks used to be 3.6 % above the anhydrite solubility (0.0815 instead of
+0.0787 mol kgw⁻¹ at 20 °C, where example 06 sits on the curve). That was the
+unit conversion: `K_C` was calibrated once, at the initial reservoir state
+(100 °C), but PhreeqcRM's mol/L ↔ mol/kgw factor scales with the solution
+density it derives per cell, so the bias appeared wherever the mineral - not
+the transport - set the concentration. It is fixed by scaling the factor per
+cell with the module's own density:
+
+```python
+k_cell = K_C * _rho_mod / RHO_REF      # _rho_mod from the selected output
+```
+
+Peak Ca is now 0.0779 mol kgw⁻¹ (was 0.0815, solubility 0.0787), anhydrite
+177.1 (was 178.7), and the low-Ca cells still agree to 1e-4. Two alternatives
+were tested and rejected: mass-fraction units (`SetUnitsSolution(3)`, conversion
+purely by gfw) do not converge for this brine (`A(H2O) activity has not
+converged`), and a database without the partial molar volumes (`-Vm` removed,
+ideal-mixing density) shifts the density to 1.115 kg/L at 20 °C and makes the
+peaks 9 % too low.
 
 The transported fields themselves are not the cause either: feeding 06b's exact
 per-cell `Ca`, `S(6)`, `T` and anhydrite values from the last time step to a

@@ -376,8 +376,12 @@ IRHO = _head0.index('rho')
 MASS_H2O = float(_so0[_head0.index('mass_H2O') * NXYZ])
 V_CELL_MOD = MASS_H2O / (rho_f[0, 0, 0] * phi[0, 0, 0])   # m^3, TSE-consistent
 
-# module transport units per TSE concentration unit (mol/L per mol/kgw)
+# module transport units per TSE concentration unit (mol/L per mol/kgw),
+# referenced to the module density of the calibration state: the conversion
+# scales with the solution density, so it is corrected per cell below
 K_C = float(_conc0[ICA * NXYZ]) / CA_INIT
+RHO_REF = float(_so0[IRHO * NXYZ])                # kg/m^3 at calibration
+_rho_mod = numpy.full(NXYZ, RHO_REF)              # module density, last step
 
 # anhydrite amount per cell (mol) that corresponds to C[2] (mol/m^3 bulk)
 ANHY_MOL = C[0, 0, 0, 3] * V_CELL_MOD
@@ -400,10 +404,12 @@ def chemical_reactions_all(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem):
         state, and with it pH, drifts. O_base is re-derived from the module
         state after every RunCells() call.
     '''
-    global _o_base
+    global _o_base, _rho_mod, IPH, IANHY, IRHO
 
-    ca_rm = C[:, :, :, 1].ravel() * K_C          # Ca, module units
-    s6_rm = C[:, :, :, 2].ravel() * K_C          # S(6), module units
+    # conversion factor per cell: scales with the module's solution density
+    k_cell = K_C * _rho_mod / RHO_REF
+    ca_rm = C[:, :, :, 1].ravel() * k_cell       # Ca, module units
+    s6_rm = C[:, :, :, 2].ravel() * k_cell       # S(6), module units
 
     conc[ICA * NXYZ:(ICA + 1) * NXYZ] = ca_rm
     conc[IS * NXYZ:(IS + 1) * NXYZ] = s6_rm
@@ -423,14 +429,15 @@ def chemical_reactions_all(C, P, T, rho_f, phi, Kx, Ky, Kz, dt_chem):
         - 4.0 * conc[IS * NXYZ:(IS + 1) * NXYZ]
 
     so = numpy.array(rm.GetSelectedOutput(), dtype=float)
+    _rho_mod = so[IRHO * NXYZ:(IRHO + 1) * NXYZ].copy()
 
     # write back into the cells that are not Dirichlet boundaries (tse.py does
     # not run chemistry there, and neither does example 6)
     inner = (BC != 1)
     C[:, :, :, 1][inner] = (conc[ICA * NXYZ:(ICA + 1) * NXYZ]
-                            / K_C).reshape(nx, ny, nz)[inner]
+                            / k_cell).reshape(nx, ny, nz)[inner]
     C[:, :, :, 2][inner] = (conc[IS * NXYZ:(IS + 1) * NXYZ]
-                            / K_C).reshape(nx, ny, nz)[inner]
+                            / k_cell).reshape(nx, ny, nz)[inner]
     C[:, :, :, 3][inner] = (so[IANHY * NXYZ:(IANHY + 1) * NXYZ]
                             / V_CELL_MOD).reshape(nx, ny, nz)[inner]
     C[:, :, :, 4][inner] = so[IPH * NXYZ:(IPH + 1) * NXYZ] \
